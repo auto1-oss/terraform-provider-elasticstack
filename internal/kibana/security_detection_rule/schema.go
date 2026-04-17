@@ -385,9 +385,9 @@ func GetSchema() schema.Schema {
 							MarkdownDescription: "The connector ID.",
 							Required:            true,
 						},
-						"params": schema.MapAttribute{
-							ElementType:         types.StringType,
-							MarkdownDescription: "Object containing the allowed connector fields, which varies according to the connector type.",
+						"params": schema.StringAttribute{
+							CustomType:          jsontypes.NormalizedType{},
+							MarkdownDescription: "JSON-encoded object containing the allowed connector fields, which varies according to the connector type. Use `jsonencode({...})` to set this value.",
 							Required:            true,
 						},
 						"group": schema.StringAttribute{
