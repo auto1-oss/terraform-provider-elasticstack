@@ -1660,7 +1660,7 @@ func TestAccResourceSecurityDetectionRule_WithConnectorAction(t *testing.T) {
 					resource.TestCheckResourceAttr(resourceName, "actions.0.action_type_id", ".cases-webhook"),
 					resource.TestCheckResourceAttr(resourceName, "actions.0.id", connectorID),
 					resource.TestCheckResourceAttr(resourceName, "actions.0.group", "default"),
-					resource.TestCheckResourceAttr(resourceName, "actions.0.params.message", "CRITICAL EQL Alert: PowerShell process detected"),
+					resource.TestCheckResourceAttr(resourceName, "actions.0.params", `{"message":"CRITICAL EQL Alert: PowerShell process detected"}`),
 					resource.TestCheckResourceAttr(resourceName, "actions.0.frequency.notify_when", "onActiveAlert"),
 					resource.TestCheckResourceAttr(resourceName, "actions.0.frequency.summary", "true"),
 					resource.TestCheckResourceAttr(resourceName, "actions.0.frequency.throttle", "10m"),
@@ -1699,7 +1699,7 @@ func TestAccResourceSecurityDetectionRule_WithConnectorAction(t *testing.T) {
 					resource.TestCheckResourceAttr(resourceName, "risk_score_mapping.0.risk_score", "95"),
 
 					// Check updated action attributes
-					resource.TestCheckResourceAttr(resourceName, "actions.0.params.message", "UPDATED CRITICAL Alert: Security event detected"),
+					resource.TestCheckResourceAttr(resourceName, "actions.0.params", `{"message":"UPDATED CRITICAL Alert: Security event detected"}`),
 					resource.TestCheckResourceAttr(resourceName, "actions.0.frequency.throttle", "5m"),
 
 					// Check exceptions list attributes
