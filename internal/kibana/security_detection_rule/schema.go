@@ -48,6 +48,7 @@ func (r *securityDetectionRuleResource) Schema(_ context.Context, _ resource.Sch
 
 func GetSchema() schema.Schema {
 	return schema.Schema{
+		Version:             1,
 		MarkdownDescription: securityDetectionRuleMarkdownDescription,
 		Attributes: map[string]schema.Attribute{
 			"id": schema.StringAttribute{
