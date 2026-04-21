@@ -21,7 +21,6 @@ import (
 	"context"
 	"errors"
 
-	"github.com/disaster37/go-kibana-rest/v8"
 	fleetclient "github.com/elastic/terraform-provider-elasticstack/internal/clients/fleet"
 	kibanaoapi "github.com/elastic/terraform-provider-elasticstack/internal/clients/kibanaoapi"
 	"github.com/hashicorp/go-version"
@@ -29,31 +28,35 @@ import (
 )
 
 // KibanaScopedClient is a typed client surface for Kibana and Fleet operations.
-// It exposes: Kibana legacy client, Kibana OpenAPI client, Fleet client, and
-// Kibana-derived version/flavor checks.
+// It exposes: Kibana OpenAPI client, Fleet client, and Kibana-derived
+// version/flavor checks.
 //
 // It deliberately does NOT expose provider-level Elasticsearch identity so that
 // version and identity checks always resolve against the scoped Kibana
 // connection rather than the provider-level Elasticsearch cluster.
 type KibanaScopedClient struct {
-	kibana       *kibana.Client
-	kibanaOapi   *kibanaoapi.Client
-	kibanaConfig kibana.Config
-	fleet        *fleetclient.Client
+	kibanaOapi *kibanaoapi.Client
+	fleet      *fleetclient.Client
 	// version is the provider version string used to tag API user-agent headers.
 	version string
-}
-
-// GetKibanaClient returns the Kibana legacy client.
-func (k *KibanaScopedClient) GetKibanaClient() (*kibana.Client, error) {
-	if k.kibana == nil {
-		return nil, errors.New("kibana client not found")
-	}
-	return k.kibana, nil
+	// kibanaEndpoint holds the resolved Kibana endpoint URL captured after
+	// provider configuration, entity-local overrides, and environment overrides
+	// have been applied. It is used by accessor validation to distinguish missing
+	// endpoint configuration from unexpected nil states.
+	kibanaEndpoint string
+	// fleetEndpoint holds the resolved Fleet endpoint URL captured after
+	// provider configuration, entity-local overrides, and environment overrides
+	// have been applied. For Fleet, the value reflects the already-resolved
+	// cfg.Fleet endpoint which may have been inherited from the Kibana-derived
+	// config path.
+	fleetEndpoint string
 }
 
 // GetKibanaOapiClient returns the Kibana OpenAPI client.
 func (k *KibanaScopedClient) GetKibanaOapiClient() (*kibanaoapi.Client, error) {
+	if k.kibanaEndpoint == "" {
+		return nil, errors.New("kibana OpenAPI client is not configured: set kibana.endpoints, kibana_connection.endpoints, or KIBANA_ENDPOINT")
+	}
 	if k.kibanaOapi == nil {
 		return nil, errors.New("kibanaoapi client not found")
 	}
@@ -62,6 +65,12 @@ func (k *KibanaScopedClient) GetKibanaOapiClient() (*kibanaoapi.Client, error) {
 
 // GetFleetClient returns the Fleet client.
 func (k *KibanaScopedClient) GetFleetClient() (*fleetclient.Client, error) {
+	if k.fleetEndpoint == "" {
+		const fleetMsg = "fleet client is not configured: set fleet.endpoint or FLEET_ENDPOINT, " +
+			"or configure kibana.endpoints, kibana_connection.endpoints, or KIBANA_ENDPOINT " +
+			"for inherited Fleet endpoint resolution"
+		return nil, errors.New(fleetMsg)
+	}
 	if k.fleet == nil {
 		return nil, errors.New("fleet client not found")
 	}
@@ -70,27 +79,16 @@ func (k *KibanaScopedClient) GetFleetClient() (*fleetclient.Client, error) {
 
 // ServerVersion returns the version of the Kibana server. Version is always
 // derived from the Kibana status API; there is no Elasticsearch fallback.
-func (k *KibanaScopedClient) ServerVersion(_ context.Context) (*version.Version, diag.Diagnostics) {
-	kibClient, err := k.GetKibanaClient()
+func (k *KibanaScopedClient) ServerVersion(ctx context.Context) (*version.Version, diag.Diagnostics) {
+	oapiClient, err := k.GetKibanaOapiClient()
 	if err != nil {
 		return nil, diag.Errorf("failed to get version from Kibana API: %s, "+
 			"please ensure a working 'kibana' endpoint is configured", err.Error())
 	}
 
-	status, err := kibClient.KibanaStatus.Get()
-	if err != nil {
-		return nil, diag.Errorf("failed to get version from Kibana API: %s, "+
-			"Please ensure a working 'kibana' endpoint is configured", err.Error())
-	}
-
-	vMap, ok := status["version"].(map[string]any)
-	if !ok {
-		return nil, diag.Errorf("failed to get version from Kibana API")
-	}
-
-	rawVersion, ok := vMap["number"].(string)
-	if !ok {
-		return nil, diag.Errorf("failed to get version number from Kibana status")
+	rawVersion, _, diags := kibanaoapi.GetKibanaStatus(ctx, oapiClient.API)
+	if diags.HasError() {
+		return nil, diags
 	}
 
 	serverVersion, err := version.NewVersion(rawVersion)
@@ -103,38 +101,32 @@ func (k *KibanaScopedClient) ServerVersion(_ context.Context) (*version.Version,
 
 // ServerFlavor returns the flavor (e.g. "serverless", "default") of the Kibana
 // server. Flavor is always derived from the Kibana status API.
-func (k *KibanaScopedClient) ServerFlavor(_ context.Context) (string, diag.Diagnostics) {
-	kibClient, err := k.GetKibanaClient()
+// Returns an empty string when build_flavor is absent (older stateful deployments).
+func (k *KibanaScopedClient) ServerFlavor(ctx context.Context) (string, diag.Diagnostics) {
+	oapiClient, err := k.GetKibanaOapiClient()
 	if err != nil {
 		return "", diag.Errorf("failed to get flavor from Kibana API: %s, "+
 			"please ensure a working 'kibana' endpoint is configured", err.Error())
 	}
 
-	status, err := kibClient.KibanaStatus.Get()
-	if err != nil {
-		return "", diag.Errorf("failed to get flavor from Kibana API: %s, "+
-			"Please ensure a working 'kibana' endpoint is configured", err.Error())
+	_, flavor, diags := kibanaoapi.GetKibanaStatus(ctx, oapiClient.API)
+	if diags.HasError() {
+		return "", diags
 	}
 
-	vMap, ok := status["version"].(map[string]any)
-	if !ok {
-		return "", diag.Errorf("failed to get flavor from Kibana API")
-	}
-
-	serverFlavor, ok := vMap["build_flavor"].(string)
-	if !ok {
-		// build_flavor field is not present in older Kibana versions (pre-serverless)
-		// Default to empty string to indicate traditional/stateful deployment
-		return "", nil
-	}
-
-	return serverFlavor, nil
+	return flavor, nil
 }
 
 // EnforceMinVersion returns true when the Kibana server version is greater than
 // or equal to minVersion, or when the server is running in serverless mode.
 func (k *KibanaScopedClient) EnforceMinVersion(ctx context.Context, minVersion *version.Version) (bool, diag.Diagnostics) {
-	flavor, diags := k.ServerFlavor(ctx)
+	oapiClient, err := k.GetKibanaOapiClient()
+	if err != nil {
+		return false, diag.Errorf("failed to get version from Kibana API: %s, "+
+			"please ensure a working 'kibana' endpoint is configured", err.Error())
+	}
+
+	rawVersion, flavor, diags := kibanaoapi.GetKibanaStatus(ctx, oapiClient.API)
 	if diags.HasError() {
 		return false, diags
 	}
@@ -143,9 +135,9 @@ func (k *KibanaScopedClient) EnforceMinVersion(ctx context.Context, minVersion *
 		return true, nil
 	}
 
-	serverVersion, diags := k.ServerVersion(ctx)
-	if diags.HasError() {
-		return false, diags
+	serverVersion, err := version.NewVersion(rawVersion)
+	if err != nil {
+		return false, diag.FromErr(err)
 	}
 
 	return serverVersion.GreaterThanOrEqual(minVersion), nil
@@ -156,11 +148,11 @@ func (k *KibanaScopedClient) EnforceMinVersion(ctx context.Context, minVersion *
 // the factory and by NewAcceptanceTestingKibanaScopedClient.
 func kibanaScopedClientFromAPIClient(a *apiClient) *KibanaScopedClient {
 	return &KibanaScopedClient{
-		kibana:       a.kibana,
-		kibanaOapi:   a.kibanaOapi,
-		kibanaConfig: a.kibanaConfig,
-		fleet:        a.fleet,
-		version:      a.version,
+		kibanaOapi:     a.kibanaOapi,
+		fleet:          a.fleet,
+		version:        a.version,
+		kibanaEndpoint: a.kibanaEndpoint,
+		fleetEndpoint:  a.fleetEndpoint,
 	}
 }
 

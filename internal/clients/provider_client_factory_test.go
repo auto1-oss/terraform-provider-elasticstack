@@ -83,9 +83,9 @@ func TestGetKibanaClient_EmptyList(t *testing.T) {
 	require.False(t, diags.HasError())
 	require.NotNil(t, scoped)
 
-	// The scoped client must expose a Kibana legacy client.
-	_, err := scoped.GetKibanaClient()
-	require.NoError(t, err, "Kibana legacy client must be present on provider-default scoped client")
+	// The scoped client must expose a Kibana OpenAPI client.
+	_, err := scoped.GetKibanaOapiClient()
+	require.NoError(t, err, "Kibana OpenAPI client must be present on provider-default scoped client")
 }
 
 // TestGetKibanaClient_NullList verifies that a null kibana_connection is treated
@@ -132,10 +132,7 @@ func TestGetKibanaClient_WithConnection(t *testing.T) {
 	require.NotNil(t, scoped)
 
 	// The scoped client must expose Kibana-derived surfaces.
-	_, err := scoped.GetKibanaClient()
-	require.NoError(t, err)
-
-	_, err = scoped.GetKibanaOapiClient()
+	_, err := scoped.GetKibanaOapiClient()
 	require.NoError(t, err)
 
 	_, err = scoped.GetFleetClient()
@@ -158,8 +155,8 @@ func TestGetKibanaClientFromSDK_AbsentBlock(t *testing.T) {
 	require.False(t, diags.HasError())
 	require.NotNil(t, scoped)
 
-	// Must expose a Kibana legacy client.
-	_, err := scoped.GetKibanaClient()
+	// Must expose a Kibana OpenAPI client.
+	_, err := scoped.GetKibanaOapiClient()
 	require.NoError(t, err)
 }
 
@@ -189,10 +186,7 @@ func TestGetKibanaClientFromSDK_WithBlock(t *testing.T) {
 	require.False(t, diags.HasError())
 	require.NotNil(t, scoped)
 
-	_, err := scoped.GetKibanaClient()
-	require.NoError(t, err)
-
-	_, err = scoped.GetKibanaOapiClient()
+	_, err := scoped.GetKibanaOapiClient()
 	require.NoError(t, err)
 
 	_, err = scoped.GetFleetClient()
@@ -322,6 +316,101 @@ func TestNewKibanaScopedClientFromFactory_Valid(t *testing.T) {
 	f := newTestFactory(t)
 	result := NewKibanaScopedClientFromFactory(f)
 	require.NotNil(t, result)
-	_, err := result.GetKibanaClient()
+	_, err := result.GetKibanaOapiClient()
 	require.NoError(t, err)
+}
+
+// --- Scenario 8: Entity-local elasticsearch_connection with missing endpoint ---
+// GetESClient on a scoped client built via the factory from a connection block
+// that has no endpoints must return the same actionable error as the
+// provider-default path.
+
+func TestGetElasticsearchClient_EntityLocalMissingEndpoint(t *testing.T) {
+	// Prevent ELASTICSEARCH_ENDPOINTS env var from supplying a fallback endpoint.
+	t.Setenv("ELASTICSEARCH_ENDPOINTS", "")
+
+	ctx := context.Background()
+	factory := newTestFactory(t)
+
+	conn := config.ElasticsearchConnection{
+		Username:               types.StringValue("elastic"),
+		Password:               types.StringValue("changeme"),
+		APIKey:                 types.StringValue(""),
+		BearerToken:            types.StringValue(""),
+		ESClientAuthentication: types.StringValue(""),
+		// Endpoints intentionally empty.
+		Endpoints: types.ListValueMust(types.StringType, []attr.Value{}),
+		Headers:   types.MapValueMust(types.StringType, map[string]attr.Value{}),
+		Insecure:  types.BoolValue(false),
+		CAFile:    types.StringValue(""),
+		CAData:    types.StringValue(""),
+		CertFile:  types.StringValue(""),
+		KeyFile:   types.StringValue(""),
+		CertData:  types.StringValue(""),
+		KeyData:   types.StringValue(""),
+	}
+
+	list, diags := types.ListValueFrom(ctx,
+		types.ObjectType{AttrTypes: elasticsearchConnectionAttrTypes()},
+		[]config.ElasticsearchConnection{conn},
+	)
+	require.False(t, diags.HasError())
+
+	scoped, diags := factory.GetElasticsearchClient(ctx, list)
+	require.False(t, diags.HasError(), "factory must not fail for empty-endpoint ES connection block")
+	require.NotNil(t, scoped)
+
+	// Calling GetESClient on the scoped client must produce the same error as
+	// the provider-default path when no endpoint is configured.
+	client, err := scoped.GetESClient()
+	assert.Nil(t, client)
+	require.Error(t, err)
+	assert.Equal(t,
+		"elasticsearch client is not configured: set elasticsearch.endpoints, elasticsearch_connection.endpoints, or ELASTICSEARCH_ENDPOINTS",
+		err.Error(),
+	)
+}
+
+// --- Scenario 9: Entity-local kibana_connection with missing endpoint ---
+// GetKibanaOapiClient on a scoped client built via the factory from a
+// kibana_connection block that has no endpoints must return the same actionable
+// error as the provider-default path.
+
+func TestGetKibanaClient_EntityLocalMissingEndpoint(t *testing.T) {
+	// Prevent KIBANA_ENDPOINT env var from supplying a fallback endpoint.
+	t.Setenv("KIBANA_ENDPOINT", "")
+
+	ctx := context.Background()
+	factory := newTestFactory(t)
+
+	conn := config.KibanaConnection{
+		Username:    types.StringValue("elastic"),
+		Password:    types.StringValue("changeme"),
+		APIKey:      types.StringValue(""),
+		BearerToken: types.StringValue(""),
+		// Endpoints intentionally empty.
+		Endpoints: types.ListValueMust(types.StringType, []attr.Value{}),
+		CACerts:   types.ListValueMust(types.StringType, []attr.Value{}),
+		Insecure:  types.BoolValue(false),
+	}
+
+	list, diags := types.ListValueFrom(ctx,
+		types.ObjectType{AttrTypes: kibanaConnectionAttrTypes()},
+		[]config.KibanaConnection{conn},
+	)
+	require.False(t, diags.HasError())
+
+	scoped, diags := factory.GetKibanaClient(ctx, list)
+	require.False(t, diags.HasError(), "factory must not fail for empty-endpoint Kibana connection block")
+	require.NotNil(t, scoped)
+
+	// Calling GetKibanaOapiClient on the scoped client must produce the actionable
+	// endpoint-missing error.
+	client, err := scoped.GetKibanaOapiClient()
+	assert.Nil(t, client)
+	require.Error(t, err)
+	assert.Equal(t,
+		"kibana OpenAPI client is not configured: set kibana.endpoints, kibana_connection.endpoints, or KIBANA_ENDPOINT",
+		err.Error(),
+	)
 }
