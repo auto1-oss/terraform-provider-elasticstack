@@ -90,9 +90,7 @@ data "elasticstack_fleet_output" "example" {
   }))>
 }
 ```
-
 ## Requirements
-
 ### Requirement: Fleet Output CRUD APIs (REQ-001–REQ-004)
 
 The resource SHALL use the Fleet Create output API to create outputs. The resource SHALL use the Fleet Get output API to read outputs. The resource SHALL use the Fleet Update output API to update outputs. The resource SHALL use the Fleet Delete output API to delete outputs. When the Fleet API returns a non-success status for any create, update, or delete operation, the resource SHALL surface the error to Terraform diagnostics.
@@ -125,13 +123,25 @@ The resource SHALL expose a computed `id` attribute that mirrors `output_id`. On
 
 ### Requirement: Import (REQ-008)
 
-The resource SHALL support import via `ImportStatePassthroughID` using `output_id` as the import path. When importing, the provided ID value SHALL be stored directly as `output_id`.
+The resource SHALL support import with both plain and composite import IDs.
 
-#### Scenario: Import by output_id
+When the import ID is a composite string in the format `<space_id>/<output_id>`, the resource SHALL set `output_id` to the parsed resource ID and `space_ids` to `[<space_id>]` in state, so that outputs in non-default Kibana spaces can be imported successfully.
 
-- GIVEN an existing Fleet output with id `my-output`
-- WHEN `terraform import ... my-output` runs
-- THEN `output_id` SHALL be `my-output` and a read cycle SHALL refresh all other attributes
+When the import ID is a plain (non-composite) string — i.e. it contains no `/` that can be parsed as a composite ID — the resource SHALL treat the entire string as `output_id` and SHALL NOT set `space_ids` from the import ID. This preserves existing behaviour for default-space imports.
+
+On the subsequent read after import (regardless of ID form), the resource SHALL use the space from state to query the Fleet API and populate all remaining attributes.
+
+#### Scenario: Import by composite space/output ID
+
+- GIVEN an existing Fleet output in Kibana space `"my-space"` with output ID `"abc-123"`
+- WHEN `terraform import` is run with the composite ID `"my-space/abc-123"`
+- THEN `output_id` SHALL be `"abc-123"` and `space_ids` SHALL contain `"my-space"`
+
+#### Scenario: Import by plain output ID (default space)
+
+- GIVEN an existing Fleet output in the default Kibana space with output ID `"abc-123"`
+- WHEN `terraform import` is run with the plain ID `"abc-123"` (no `/` separator)
+- THEN `output_id` SHALL be `"abc-123"` and `space_ids` SHALL NOT be set from the import ID
 
 ### Requirement: Lifecycle — output_id forces replacement (REQ-009)
 
@@ -235,13 +245,19 @@ The Fleet API does not return `space_ids` in output responses. On read, the reso
 
 ### Requirement: State mapping — SSL null when no SSL in API response (REQ-019)
 
-When the API response contains no SSL block (nil), the resource SHALL set `ssl` to null in state. When the API response contains an SSL block but all fields resolve to empty/nil, the resource SHALL also set `ssl` to null.
+When the API response contains no SSL block (nil), the resource SHALL set `ssl` to null in state. When the API response contains an SSL block but all fields (`certificate`, `certificate_authorities`, `key`, `verification_mode`) resolve to empty/nil, the resource SHALL also set `ssl` to null.
 
 #### Scenario: No SSL in API response
 
 - GIVEN the output has no SSL configured in Fleet
 - WHEN read runs
 - THEN `ssl` SHALL be null in state
+
+#### Scenario: SSL block with only verification_mode
+
+- GIVEN the API returns an SSL block containing only `verification_mode = "none"` and no certificate fields
+- WHEN read runs
+- THEN `ssl` SHALL be non-null in state with `verification_mode = "none"`
 
 ### Requirement: StateUpgrade — v0 ssl list to object (REQ-020–REQ-022)
 
@@ -369,3 +385,45 @@ The `elasticstack_fleet_output` resource and data source SHALL use the provider-
 - GIVEN `kibana_connection` is configured on the Fleet output resource or data source
 - WHEN an API call runs
 - THEN the entity SHALL use the scoped Fleet client derived from that block
+
+### Requirement: SSL verification_mode attribute (REQ-025)
+
+The `ssl` block of `elasticstack_fleet_output` SHALL expose a `verification_mode` optional string attribute. Valid values are `"certificate"`, `"full"`, `"none"`, and `"strict"`. The schema validator SHALL reject any other value at plan time. When `verification_mode` is not configured, it SHALL be null in state and SHALL NOT be sent to the API.
+
+#### Scenario: Set verification_mode to none
+
+- WHEN a resource configuration sets `ssl.verification_mode = "none"`
+- THEN schema validation SHALL accept the value
+
+#### Scenario: Set verification_mode to invalid value
+
+- WHEN a resource configuration sets `ssl.verification_mode = "invalid"`
+- THEN schema validation SHALL return an error
+
+#### Scenario: verification_mode written on create
+
+- WHEN a resource with `ssl.verification_mode = "none"` is created
+- THEN the create API request SHALL include `ssl.verification_mode = "none"`
+
+#### Scenario: verification_mode written on update
+
+- WHEN a resource with `ssl.verification_mode = "certificate"` is updated
+- THEN the update API request SHALL include `ssl.verification_mode = "certificate"`
+
+#### Scenario: verification_mode read back into state
+
+- GIVEN the Fleet API returns `ssl.verification_mode = "strict"` in the output
+- WHEN read runs
+- THEN state SHALL contain `ssl.verification_mode = "strict"`
+
+#### Scenario: verification_mode null when unset
+
+- GIVEN no `ssl.verification_mode` is configured
+- WHEN the resource is created and read
+- THEN `ssl.verification_mode` SHALL be null in state and no `verification_mode` field SHALL appear in the API request
+
+#### Scenario: verification_mode applies to all output types
+
+- WHEN `ssl.verification_mode` is configured on an output of type `elasticsearch`, `remote_elasticsearch`, `logstash`, or `kafka`
+- THEN the attribute SHALL be sent and read back for each output type
+

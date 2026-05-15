@@ -21,6 +21,7 @@ import (
 	"math"
 
 	"github.com/elastic/terraform-provider-elasticstack/generated/kbapi"
+	"github.com/elastic/terraform-provider-elasticstack/internal/utils/typeutils"
 	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 )
@@ -50,7 +51,7 @@ func (m tfModel) apmLatencyIndicatorToAPI() (bool, kbapi.SLOsSloWithSummaryRespo
 			Filter          *string `json:"filter,omitempty"`
 			Index           string  `json:"index"`
 			Service         string  `json:"service"`
-			Threshold       float32 `json:"threshold"`
+			Threshold       float64 `json:"threshold"`
 			TransactionName string  `json:"transactionName"`
 			TransactionType string  `json:"transactionType"`
 		}{
@@ -58,9 +59,9 @@ func (m tfModel) apmLatencyIndicatorToAPI() (bool, kbapi.SLOsSloWithSummaryRespo
 			Environment:     ind.Environment.ValueString(),
 			TransactionType: ind.TransactionType.ValueString(),
 			TransactionName: ind.TransactionName.ValueString(),
-			Filter:          stringPtr(ind.Filter),
+			Filter:          typeutils.ValueStringPointer(ind.Filter),
 			Index:           ind.Index.ValueString(),
-			Threshold:       float32(ind.Threshold.ValueInt64()),
+			Threshold:       float64(ind.Threshold.ValueInt64()),
 		},
 	}
 
@@ -91,7 +92,7 @@ func (m *tfModel) populateFromApmLatencyIndicator(apiIndicator kbapi.SLOsIndicat
 		TransactionType: types.StringValue(p.TransactionType),
 		TransactionName: types.StringValue(p.TransactionName),
 		Index:           types.StringValue(p.Index),
-		Filter:          stringOrNull(p.Filter),
+		Filter:          types.StringPointerValue(p.Filter),
 		Threshold:       types.Int64Value(int64(p.Threshold)),
 	}}
 

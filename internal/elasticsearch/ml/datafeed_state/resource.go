@@ -20,30 +20,40 @@ package datafeedstate
 import (
 	"context"
 
-	"github.com/elastic/terraform-provider-elasticstack/internal/clients"
+	"github.com/elastic/terraform-provider-elasticstack/internal/entitycore"
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 )
 
-func NewMLDatafeedStateResource() resource.Resource {
-	return &mlDatafeedStateResource{}
-}
+var (
+	_ resource.Resource                = newMLDatafeedStateResource()
+	_ resource.ResourceWithConfigure   = newMLDatafeedStateResource()
+	_ resource.ResourceWithImportState = newMLDatafeedStateResource()
+)
 
 type mlDatafeedStateResource struct {
-	client *clients.ProviderClientFactory
+	*entitycore.ElasticsearchResource[MLDatafeedStateData]
 }
 
-func (r *mlDatafeedStateResource) Metadata(_ context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
-	resp.TypeName = req.ProviderTypeName + "_elasticsearch_ml_datafeed_state"
+func newMLDatafeedStateResource() *mlDatafeedStateResource {
+	createFunc, updateFunc := entitycore.PlaceholderElasticsearchWriteCallbacks[MLDatafeedStateData]()
+	return &mlDatafeedStateResource{
+		ElasticsearchResource: entitycore.NewElasticsearchResource[MLDatafeedStateData](
+			entitycore.ComponentElasticsearch,
+			"ml_datafeed_state",
+			GetSchema,
+			readMLDatafeedState,
+			deleteMLDatafeedState,
+			createFunc,
+			updateFunc,
+		),
+	}
 }
 
-func (r *mlDatafeedStateResource) Configure(_ context.Context, req resource.ConfigureRequest, resp *resource.ConfigureResponse) {
-	client, diags := clients.ConvertProviderDataToFactory(req.ProviderData)
-	resp.Diagnostics.Append(diags...)
-	r.client = client
+func NewMLDatafeedStateResource() resource.Resource {
+	return newMLDatafeedStateResource()
 }
 
 func (r *mlDatafeedStateResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
-	// Retrieve import ID and save to datafeed_id attribute
-	resource.ImportStatePassthroughID(ctx, path.Root("datafeed_id"), req, resp)
+	resource.ImportStatePassthroughID(ctx, path.Root("id"), req, resp)
 }

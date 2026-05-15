@@ -21,6 +21,7 @@ import (
 	"context"
 
 	"github.com/elastic/terraform-provider-elasticstack/internal/clients/fleet"
+	"github.com/elastic/terraform-provider-elasticstack/internal/utils/typeutils"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 )
@@ -34,7 +35,7 @@ func (r *integrationResource) Read(ctx context.Context, req resource.ReadRequest
 		return
 	}
 
-	client, diags := r.client.GetKibanaClient(ctx, stateModel.KibanaConnection)
+	client, diags := r.Client().GetKibanaClient(ctx, stateModel.KibanaConnection)
 	resp.Diagnostics.Append(diags...)
 	if resp.Diagnostics.HasError() {
 		return
@@ -48,17 +49,42 @@ func (r *integrationResource) Read(ctx context.Context, req resource.ReadRequest
 
 	name := stateModel.Name.ValueString()
 	version := stateModel.Version.ValueString()
-	pkg, diags := fleet.GetPackage(ctx, fleetClient, name, version, stateModel.SpaceID.ValueString())
+	spaceID := stateModel.SpaceID.ValueString()
+
+	spaceAware := false
+	if typeutils.IsKnown(stateModel.SpaceID) {
+		supported, versionDiags := supportsSpaceAwareIntegration(ctx, client, spaceID)
+		resp.Diagnostics.Append(versionDiags...)
+		if resp.Diagnostics.HasError() {
+			return
+		}
+		spaceAware = supported
+	}
+
+	pkg, diags := fleet.GetPackage(ctx, fleetClient, name, version, spaceID)
 	resp.Diagnostics.Append(diags...)
 	if resp.Diagnostics.HasError() {
 		return
 	}
-	if pkg == nil || (pkg.Status != nil && *pkg.Status != "installed") {
+	if pkg == nil || !fleetPackageInstalled(pkg, spaceID, spaceAware) {
 		resp.State.RemoveResource(ctx)
 		return
 	}
 
-	stateModel.ID = types.StringValue(getPackageID(name, version))
+	// Fleet's GET /epm/packages/{name}/{version} reports status "installed"
+	// whenever the package is installed at *any* version, regardless of the
+	// version path parameter. Use InstallationInfo.Version when present so
+	// Terraform observes out-of-band upgrades and downgrades as drift.
+	// See https://github.com/elastic/terraform-provider-elasticstack/issues/1585.
+	installedVersion := version
+	if pkg.InstallationInfo != nil && pkg.InstallationInfo.Version != "" {
+		installedVersion = pkg.InstallationInfo.Version
+	}
+	stateModel.Version = types.StringValue(installedVersion)
+	stateModel.ID = types.StringValue(getPackageID(name, installedVersion))
+	if stateModel.SpaceID.IsNull() {
+		stateModel.SpaceID = installedKibanaSpaceID(pkg)
+	}
 
 	diags = resp.State.Set(ctx, stateModel)
 	resp.Diagnostics.Append(diags...)

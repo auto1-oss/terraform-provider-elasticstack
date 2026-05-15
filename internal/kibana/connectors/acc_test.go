@@ -26,7 +26,7 @@ import (
 	"testing"
 
 	"github.com/elastic/terraform-provider-elasticstack/internal/acctest"
-	"github.com/elastic/terraform-provider-elasticstack/internal/clients"
+	"github.com/elastic/terraform-provider-elasticstack/internal/acctest/checks"
 	kibanaoapi "github.com/elastic/terraform-provider-elasticstack/internal/clients/kibanaoapi"
 	"github.com/elastic/terraform-provider-elasticstack/internal/kibana/connectors"
 	"github.com/elastic/terraform-provider-elasticstack/internal/versionutils"
@@ -35,7 +35,6 @@ import (
 	"github.com/hashicorp/terraform-plugin-testing/config"
 	sdkacctest "github.com/hashicorp/terraform-plugin-testing/helper/acctest"
 	"github.com/hashicorp/terraform-plugin-testing/helper/resource"
-	"github.com/hashicorp/terraform-plugin-testing/terraform"
 )
 
 //go:embed testdata/TestAccResourceKibanaConnectorFromSDK/main.tf
@@ -168,6 +167,7 @@ func TestAccResourceKibanaConnectorCasesWebhook(t *testing.T) {
 
 func testCommonAttributes(connectorName, connectorTypeID string) resource.TestCheckFunc {
 	return resource.ComposeTestCheckFunc(
+		resource.TestCheckResourceAttrSet("elasticstack_kibana_action_connector.test", "id"),
 		resource.TestCheckResourceAttr("elasticstack_kibana_action_connector.test", "name", connectorName),
 		resource.TestCheckResourceAttr("elasticstack_kibana_action_connector.test", "connector_type_id", connectorTypeID),
 		resource.TestCheckResourceAttr("elasticstack_kibana_action_connector.test", "is_deprecated", "false"),
@@ -176,37 +176,18 @@ func testCommonAttributes(connectorName, connectorTypeID string) resource.TestCh
 	)
 }
 
-func checkResourceKibanaConnectorDestroy(s *terraform.State) error {
-	client, err := clients.NewAcceptanceTestingKibanaScopedClient()
-	if err != nil {
-		return err
-	}
-
-	oapiClient, err := client.GetKibanaOapiClient()
-	if err != nil {
-		return err
-	}
-
-	for _, rs := range s.RootModule().Resources {
-		if rs.Type != "elasticstack_kibana_action_connector" {
-			continue
-		}
-		compID, _ := clients.CompositeIDFromStr(rs.Primary.ID)
-
-		connector, diags := kibanaoapi.GetConnector(context.Background(), oapiClient, compID.ResourceID, compID.ClusterID)
+var checkResourceKibanaConnectorDestroy = checks.KibanaResourceDestroyCheckCompositeID(
+	"elasticstack_kibana_action_connector",
+	func(ctx context.Context, client *kibanaoapi.Client, spaceID, connectorID string) (bool, error) {
+		connector, diags := kibanaoapi.GetConnector(ctx, client, connectorID, spaceID)
 		if diags.HasError() {
-			return fmt.Errorf("Failed to get connector: %v", diags)
+			return false, fmt.Errorf("Failed to get connector: %v", diags)
 		}
-
-		if connector != nil {
-			return fmt.Errorf("Action connector (%s) still exists", compID.ResourceID)
-		}
-	}
-	return nil
-}
+		return connector != nil, nil
+	},
+)
 
 func TestAccResourceKibanaConnectorIndex(t *testing.T) {
-	minSupportedVersion := version.Must(version.NewSemver("7.14.0"))
 
 	connectorName := sdkacctest.RandStringFromCharSet(22, sdkacctest.CharSetAlphaNum)
 
@@ -216,13 +197,13 @@ func TestAccResourceKibanaConnectorIndex(t *testing.T) {
 		Steps: []resource.TestStep{
 			{
 				ProtoV6ProviderFactories: acctest.Providers,
-				SkipFunc:                 versionutils.CheckIfVersionIsUnsupported(minSupportedVersion),
 				ConfigDirectory:          acctest.NamedTestCaseDirectory("create"),
 				ConfigVariables: config.Variables{
 					"connector_name": config.StringVariable(connectorName),
 				},
 				Check: resource.ComposeTestCheckFunc(
 					testCommonAttributes(connectorName, ".index"),
+					resource.TestCheckResourceAttr("elasticstack_kibana_action_connector.test", "space_id", "default"),
 
 					resource.TestMatchResourceAttr("elasticstack_kibana_action_connector.test", "config", regexp.MustCompile(`\"index\":\"\.kibana\"`)),
 					resource.TestMatchResourceAttr("elasticstack_kibana_action_connector.test", "config", regexp.MustCompile(`\"refresh\":true`)),
@@ -230,7 +211,6 @@ func TestAccResourceKibanaConnectorIndex(t *testing.T) {
 			},
 			{
 				ProtoV6ProviderFactories: acctest.Providers,
-				SkipFunc:                 versionutils.CheckIfVersionIsUnsupported(minSupportedVersion),
 				ConfigDirectory:          acctest.NamedTestCaseDirectory("update"),
 				ConfigVariables: config.Variables{
 					"connector_name": config.StringVariable(connectorName),
@@ -247,7 +227,6 @@ func TestAccResourceKibanaConnectorIndex(t *testing.T) {
 }
 
 func TestAccResourceKibanaConnectorWebhookAuthTypeNull(t *testing.T) {
-	minSupportedVersion := version.Must(version.NewSemver("7.14.0"))
 
 	connectorName := sdkacctest.RandStringFromCharSet(22, sdkacctest.CharSetAlphaNum)
 
@@ -257,7 +236,6 @@ func TestAccResourceKibanaConnectorWebhookAuthTypeNull(t *testing.T) {
 		Steps: []resource.TestStep{
 			{
 				ProtoV6ProviderFactories: acctest.Providers,
-				SkipFunc:                 versionutils.CheckIfVersionIsUnsupported(minSupportedVersion),
 				ConfigDirectory:          acctest.NamedTestCaseDirectory("create"),
 				ConfigVariables: config.Variables{
 					"connector_name": config.StringVariable(connectorName),
@@ -274,7 +252,6 @@ func TestAccResourceKibanaConnectorWebhookAuthTypeNull(t *testing.T) {
 			},
 			{
 				ProtoV6ProviderFactories: acctest.Providers,
-				SkipFunc:                 versionutils.CheckIfVersionIsUnsupported(minSupportedVersion),
 				ConfigDirectory:          acctest.NamedTestCaseDirectory("omit_auth_type"),
 				ConfigVariables: config.Variables{
 					"connector_name": config.StringVariable(connectorName),
@@ -299,7 +276,6 @@ func TestAccResourceKibanaConnectorWebhookAuthTypeNull(t *testing.T) {
 }
 
 func TestAccResourceKibanaConnectorFromSDK(t *testing.T) {
-	minSupportedVersion := version.Must(version.NewSemver("7.14.0"))
 
 	connectorName := sdkacctest.RandStringFromCharSet(22, sdkacctest.CharSetAlphaNum)
 
@@ -315,8 +291,7 @@ func TestAccResourceKibanaConnectorFromSDK(t *testing.T) {
 						VersionConstraint: "0.11.17",
 					},
 				},
-				SkipFunc: versionutils.CheckIfVersionIsUnsupported(minSupportedVersion),
-				Config:   sdkIndexConnectorConfig,
+				Config: sdkIndexConnectorConfig,
 				ConfigVariables: config.Variables{
 					"connector_name": config.StringVariable(connectorName),
 				},
@@ -329,7 +304,6 @@ func TestAccResourceKibanaConnectorFromSDK(t *testing.T) {
 			},
 			{
 				ProtoV6ProviderFactories: acctest.Providers,
-				SkipFunc:                 versionutils.CheckIfVersionIsUnsupported(minSupportedVersion),
 				ConfigDirectory:          acctest.NamedTestCaseDirectory("upgrade"),
 				ConfigVariables: config.Variables{
 					"connector_name": config.StringVariable(connectorName),
@@ -346,7 +320,6 @@ func TestAccResourceKibanaConnectorFromSDK(t *testing.T) {
 }
 
 func TestAccResourceKibanaConnectorEmptyConfigFromSDK(t *testing.T) {
-	minSupportedVersion := version.Must(version.NewSemver("7.14.0"))
 
 	connectorName := sdkacctest.RandStringFromCharSet(22, sdkacctest.CharSetAlphaNum)
 
@@ -362,8 +335,7 @@ func TestAccResourceKibanaConnectorEmptyConfigFromSDK(t *testing.T) {
 						VersionConstraint: "0.11.17",
 					},
 				},
-				SkipFunc: versionutils.CheckIfVersionIsUnsupported(minSupportedVersion),
-				Config:   sdkSlackConnectorConfig,
+				Config: sdkSlackConnectorConfig,
 				ConfigVariables: config.Variables{
 					"connector_name": config.StringVariable(connectorName),
 				},
@@ -375,7 +347,6 @@ func TestAccResourceKibanaConnectorEmptyConfigFromSDK(t *testing.T) {
 			},
 			{
 				ProtoV6ProviderFactories: acctest.Providers,
-				SkipFunc:                 versionutils.CheckIfVersionIsUnsupported(minSupportedVersion),
 				ConfigDirectory:          acctest.NamedTestCaseDirectory("upgrade"),
 				ConfigVariables: config.Variables{
 					"connector_name": config.StringVariable(connectorName),
@@ -384,6 +355,55 @@ func TestAccResourceKibanaConnectorEmptyConfigFromSDK(t *testing.T) {
 					testCommonAttributes(connectorName, ".slack"),
 
 					resource.TestCheckResourceAttr("elasticstack_kibana_action_connector.test", "config", `{"__tf_provider_context":".slack"}`),
+				),
+			},
+		},
+	})
+}
+
+func TestAccResourceKibanaConnectorCustomSpace(t *testing.T) {
+	spaceID := sdkacctest.RandStringFromCharSet(10, sdkacctest.CharSetAlphaNum)
+	connectorName := sdkacctest.RandStringFromCharSet(22, sdkacctest.CharSetAlphaNum)
+
+	resource.Test(t, resource.TestCase{
+		PreCheck:     func() { acctest.PreCheck(t) },
+		CheckDestroy: checkResourceKibanaConnectorDestroy,
+		Steps: []resource.TestStep{
+			{
+				ProtoV6ProviderFactories: acctest.Providers,
+				ConfigDirectory:          acctest.NamedTestCaseDirectory("create"),
+				ConfigVariables: config.Variables{
+					"connector_name": config.StringVariable(connectorName),
+					"space_id":       config.StringVariable(spaceID),
+				},
+				Check: resource.ComposeTestCheckFunc(
+					resource.TestCheckResourceAttr("elasticstack_kibana_action_connector.test", "space_id", spaceID),
+					resource.TestCheckResourceAttrSet("elasticstack_kibana_action_connector.test", "id"),
+					testCommonAttributes(connectorName, ".index"),
+				),
+			},
+		},
+	})
+}
+
+func TestAccResourceKibanaConnectorKibanaConnection(t *testing.T) {
+	connectorName := sdkacctest.RandStringFromCharSet(22, sdkacctest.CharSetAlphaNum)
+
+	resource.Test(t, resource.TestCase{
+		PreCheck: func() {
+			acctest.PreCheck(t)
+			acctest.PreCheckWithExplicitKibanaEndpoint(t)
+		},
+		CheckDestroy: checkResourceKibanaConnectorDestroy,
+		Steps: []resource.TestStep{
+			{
+				ProtoV6ProviderFactories: acctest.Providers,
+				ConfigDirectory:          acctest.NamedTestCaseDirectory("create"),
+				ConfigVariables:          acctest.KibanaConnectionVariables(config.Variables{"connector_name": config.StringVariable(connectorName)}),
+				Check: resource.ComposeTestCheckFunc(
+					testCommonAttributes(connectorName, ".index"),
+					resource.TestCheckResourceAttr("elasticstack_kibana_action_connector.test", "kibana_connection.#", "1"),
+					resource.TestCheckResourceAttr("elasticstack_kibana_action_connector.test", "kibana_connection.0.insecure", "false"),
 				),
 			},
 		},

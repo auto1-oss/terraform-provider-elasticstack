@@ -21,6 +21,7 @@ import (
 	"context"
 	"fmt"
 	"slices"
+	"strings"
 
 	"github.com/hashicorp/terraform-plugin-framework/attr"
 	"github.com/hashicorp/terraform-plugin-framework/diag"
@@ -30,9 +31,25 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/types"
 )
 
+// attrValueIsUnsetForConditionalValidation returns whether the attribute value should be treated
+// as unset for RequiredIf, ForbiddenIf, and AllowedIf.
+//
+// Known empty types.String ("") is treated as unset, so optional strings left blank in
+// configuration do not count as a set value. Other attribute kinds only consider null/unknown
+// as unset. This matches typical HCL/TF expectations for optional string attributes.
+func attrValueIsUnsetForConditionalValidation(val attr.Value) bool {
+	if val == nil || val.IsNull() || val.IsUnknown() {
+		return true
+	}
+	if s, ok := val.(types.String); ok {
+		return s.ValueString() == ""
+	}
+	return false
+}
+
 type valueValidator func(dependentFieldHasAllowedValue bool, dependentValueStr string, val attr.Value, p path.Path) diag.Diagnostics
 
-// condition represents a validation rule that enforces conditional requirements
+// Condition represents a validation rule that enforces conditional requirements
 // based on the value of a dependent field. It contains either a static path or
 // a path expression to the field that this condition depends on, and a list of
 // allowed values for that field.
@@ -40,11 +57,12 @@ type valueValidator func(dependentFieldHasAllowedValue bool, dependentValueStr s
 // validation logic can be applied to the current field.
 // Use dependentPath for absolute paths, or dependentPathExpression for relative paths.
 type Condition struct {
-	description             func() string
-	dependentPath           *path.Path
-	dependentPathExpression *path.Expression
-	allowedValues           []string
-	validateValue           valueValidator
+	description               func() string
+	dependentPath             *path.Path
+	dependentPathExpression   *path.Expression
+	allowedValues             []string
+	validateValue             valueValidator
+	matchNestedObjectPresence bool
 }
 
 // Description describes the validation in plain text formatting.
@@ -74,6 +92,21 @@ func (v Condition) checkPathExpression(ctx context.Context, config tfsdk.Config,
 	if len(matchedPaths) == 0 {
 		// No match found, condition not met
 		return false, "", nil
+	}
+
+	if v.matchNestedObjectPresence {
+		for _, matchedPath := range matchedPaths {
+			var obj types.Object
+			getDiags := config.GetAttribute(ctx, matchedPath, &obj)
+			diags.Append(getDiags...)
+			if getDiags.HasError() {
+				continue
+			}
+			if !obj.IsNull() && !obj.IsUnknown() {
+				return true, "", diags
+			}
+		}
+		return false, "", diags
 	}
 
 	// Iterate through all matched paths
@@ -164,6 +197,10 @@ func (v Condition) ValidateInt64(ctx context.Context, request validator.Int64Req
 	response.Diagnostics.Append(v.validate(ctx, request.Config, request.ConfigValue, request.Path)...)
 }
 
+func (v Condition) ValidateFloat64(ctx context.Context, request validator.Float64Request, response *validator.Float64Response) {
+	response.Diagnostics.Append(v.validate(ctx, request.Config, request.ConfigValue, request.Path)...)
+}
+
 func (v Condition) ValidateBool(ctx context.Context, request validator.BoolRequest, response *validator.BoolResponse) {
 	response.Diagnostics.Append(v.validate(ctx, request.Config, request.ConfigValue, request.Path)...)
 }
@@ -237,8 +274,7 @@ func AllowedIfDependentPathOneOf(dependentPath path.Path, allowedValues []string
 		},
 		validateValue: func(dependentFieldHasAllowedValue bool, dependentValueStr string, val attr.Value, p path.Path) diag.Diagnostics {
 			var diags diag.Diagnostics
-			isEmpty := val.IsNull() || val.IsUnknown()
-			isSet := !isEmpty
+			isSet := !attrValueIsUnsetForConditionalValidation(val)
 
 			if dependentFieldHasAllowedValue {
 				return diags
@@ -336,7 +372,7 @@ func RequiredIfDependentPathOneOf(dependentPath path.Path, allowedValues []strin
 		},
 		validateValue: func(dependentFieldHasAllowedValue bool, _ string, val attr.Value, p path.Path) diag.Diagnostics {
 			var diags diag.Diagnostics
-			isEmpty := val.IsNull() || val.IsUnknown()
+			isEmpty := attrValueIsUnsetForConditionalValidation(val)
 
 			if !dependentFieldHasAllowedValue {
 				return diags
@@ -395,8 +431,7 @@ func ForbiddenIfDependentPathOneOf(dependentPath path.Path, allowedValues []stri
 				return diags
 			}
 
-			isEmpty := val.IsNull() || val.IsUnknown()
-			isSet := !isEmpty
+			isSet := !attrValueIsUnsetForConditionalValidation(val)
 			if isSet {
 				diags.AddAttributeError(p, "Invalid Configuration",
 					fmt.Sprintf("Attribute %s cannot be set when %s equals %q",
@@ -439,8 +474,7 @@ func AllowedIfDependentPathExpressionOneOf(dependentPathExpression path.Expressi
 		},
 		validateValue: func(dependentFieldHasAllowedValue bool, dependentValueStr string, val attr.Value, p path.Path) diag.Diagnostics {
 			var diags diag.Diagnostics
-			isEmpty := val.IsNull() || val.IsUnknown()
-			isSet := !isEmpty
+			isSet := !attrValueIsUnsetForConditionalValidation(val)
 
 			if dependentFieldHasAllowedValue {
 				return diags
@@ -494,7 +528,7 @@ func AllowedIfDependentPathExpressionOneOf(dependentPathExpression path.Expressi
 //	)
 //	// This would require the current attribute when sibling "type" equals "custom" or "advanced"
 func RequiredIfDependentPathExpressionOneOf(dependentPathExpression path.Expression, allowedValues []string) Condition {
-	descStr := "dependent field"
+	const descStr = "dependent field"
 	return Condition{
 		dependentPathExpression: &dependentPathExpression,
 		allowedValues:           allowedValues,
@@ -506,7 +540,7 @@ func RequiredIfDependentPathExpressionOneOf(dependentPathExpression path.Express
 		},
 		validateValue: func(dependentFieldHasAllowedValue bool, _ string, val attr.Value, p path.Path) diag.Diagnostics {
 			var diags diag.Diagnostics
-			isEmpty := val.IsNull() || val.IsUnknown()
+			isEmpty := attrValueIsUnsetForConditionalValidation(val)
 
 			if !dependentFieldHasAllowedValue {
 				return diags
@@ -561,7 +595,7 @@ func RequiredIfDependentPathExpressionOneOf(dependentPathExpression path.Express
 //	)
 //	// This will prevent setting the current attribute when sibling "type" equals "basic" or "simple"
 func ForbiddenIfDependentPathExpressionOneOf(dependentPathExpression path.Expression, allowedValues []string) Condition {
-	descStr := "dependent field"
+	const descStr = "dependent field"
 	return Condition{
 		dependentPathExpression: &dependentPathExpression,
 		allowedValues:           allowedValues,
@@ -578,8 +612,7 @@ func ForbiddenIfDependentPathExpressionOneOf(dependentPathExpression path.Expres
 				return diags
 			}
 
-			isEmpty := val.IsNull() || val.IsUnknown()
-			isSet := !isEmpty
+			isSet := !attrValueIsUnsetForConditionalValidation(val)
 			if isSet {
 				var msg string
 				if len(allowedValues) == 1 {
@@ -602,6 +635,87 @@ func ForbiddenIfDependentPathExpressionOneOf(dependentPathExpression path.Expres
 					p,
 					"Invalid Configuration",
 					msg,
+				)
+			}
+			return diags
+		},
+	}
+}
+
+// OneOfWhenDependentPathExpressionEquals creates a validation condition that validates the current attribute's
+// value is one of the allowed values when a dependent attribute matched by the path expression equals a specific value.
+// This uses a relative path expression that is resolved relative to the field being validated.
+//
+// Parameters:
+//   - dependentPathExpression: The path expression to match the dependent attribute relative to the current field
+//   - dependentValue: The exact string value that the dependent attribute must equal
+//   - allowedValues: A slice of string values that the current attribute must match when the dependent field equals dependentValue
+//
+// Returns:
+//   - condition: A validation condition that enforces the one-of rule
+func OneOfWhenDependentPathExpressionEquals(dependentPathExpression path.Expression, dependentValue string, allowedValues []string) Condition {
+	const descStr = "dependent field"
+	return Condition{
+		dependentPathExpression: &dependentPathExpression,
+		allowedValues:           []string{dependentValue}, // for checking the dependent field
+		description: func() string {
+			return fmt.Sprintf("value must be one of %v when %s equals %q", allowedValues, descStr, dependentValue)
+		},
+		validateValue: func(dependentFieldHasAllowedValue bool, dependentValueStr string, val attr.Value, p path.Path) diag.Diagnostics {
+			var diags diag.Diagnostics
+
+			if !dependentFieldHasAllowedValue {
+				return diags
+			}
+
+			if attrValueIsUnsetForConditionalValidation(val) {
+				return diags
+			}
+
+			var currentValueStr string
+			if s, ok := val.(types.String); ok {
+				currentValueStr = s.ValueString()
+			}
+
+			if !slices.Contains(allowedValues, currentValueStr) {
+				diags.AddAttributeError(p, "Invalid Attribute Value Match",
+					fmt.Sprintf("Attribute %s must be one of [%s] when %s equals %q, got: %q",
+						p,
+						strings.Join(allowedValues, ", "),
+						descStr,
+						dependentValueStr,
+						currentValueStr,
+					),
+				)
+			}
+
+			return diags
+		},
+	}
+}
+
+// ForbiddenIfDrilldownVariantSiblingNestedPresent forbids the current drilldown variant nested block when another
+// optional SingleNested sibling variant under the same list item is set (REQ-039: Kibana dashboard `drilldowns`
+// discriminated union). Prefer ForbiddenIfDependentPathExpressionOneOf when the dependent is a plain string enum.
+func ForbiddenIfDrilldownVariantSiblingNestedPresent(dependentPathExpression path.Expression) Condition {
+	const descStr = "another drilldown variant block"
+	return Condition{
+		dependentPathExpression:   &dependentPathExpression,
+		matchNestedObjectPresence: true,
+		description: func() string {
+			return fmt.Sprintf("value cannot be set when %s is also configured", descStr)
+		},
+		validateValue: func(dependentFieldHasAllowedValue bool, _ string, val attr.Value, p path.Path) diag.Diagnostics {
+			var diags diag.Diagnostics
+			if !dependentFieldHasAllowedValue {
+				return diags
+			}
+			isSet := !attrValueIsUnsetForConditionalValidation(val)
+			if isSet {
+				diags.AddAttributeError(
+					p,
+					"Invalid Configuration",
+					fmt.Sprintf("%s configures more than one variant — set only one of `dashboard_drilldown`, `discover_drilldown`, or `url_drilldown` per `drilldowns` entry.", p),
 				)
 			}
 			return diags

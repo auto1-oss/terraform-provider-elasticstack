@@ -20,15 +20,12 @@ package parameter
 import (
 	_ "embed"
 	"slices"
-	"strings"
 
 	kboapi "github.com/elastic/terraform-provider-elasticstack/generated/kbapi"
-	"github.com/elastic/terraform-provider-elasticstack/internal/clients"
 	"github.com/elastic/terraform-provider-elasticstack/internal/kibana/synthetics"
 	providerschema "github.com/elastic/terraform-provider-elasticstack/internal/schema"
-	"github.com/elastic/terraform-provider-elasticstack/internal/utils"
+	"github.com/elastic/terraform-provider-elasticstack/internal/utils/typeutils"
 	"github.com/hashicorp/terraform-plugin-framework/attr"
-	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/booldefault"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/boolplanmodifier"
@@ -131,17 +128,9 @@ func (m *tfModelV0) toParameterRequest(forUpdate bool) kboapi.SyntheticsParamete
 		Value:       m.Value.ValueString(),
 		Description: new(m.Description.ValueString()),
 		// We need this to marshal as an empty JSON array, not null.
-		Tags:              new(schemautil.NonNilSlice(synthetics.ValueStringSlice(m.Tags))),
+		Tags:              new(typeutils.NonNilSlice(synthetics.ValueStringSlice(m.Tags))),
 		ShareAcrossSpaces: shareAcrossSpaces,
 	}
-}
-
-func tryReadCompositeID(id string) (*clients.CompositeID, diag.Diagnostics) {
-	if strings.Contains(id, "/") {
-		compositeID, diagnostics := synthetics.GetCompositeID(id)
-		return compositeID, diagnostics
-	}
-	return nil, diag.Diagnostics{}
 }
 
 func modelV0FromOAPI(param kboapi.SyntheticsGetParameterResponse) tfModelV0 {
@@ -154,7 +143,7 @@ func modelV0FromOAPI(param kboapi.SyntheticsGetParameterResponse) tfModelV0 {
 		Description: types.StringPointerValue(param.Description),
 		// Terraform, like json.Marshal, treats empty slices as null. We need an
 		// actual backing array of size 0.
-		Tags:              schemautil.NonNilSlice(synthetics.StringSliceValue(schemautil.DefaultIfNil(param.Tags))),
+		Tags:              typeutils.NonNilSlice(synthetics.StringSliceValue(typeutils.DefaultIfNil(param.Tags))),
 		ShareAcrossSpaces: types.BoolValue(allSpaces),
 	}
 }

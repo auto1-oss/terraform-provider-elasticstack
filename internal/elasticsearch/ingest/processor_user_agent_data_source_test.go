@@ -32,8 +32,32 @@ func TestAccDataSourceIngestProcessorUserAgent(t *testing.T) {
 				ProtoV6ProviderFactories: acctest.Providers,
 				ConfigDirectory:          acctest.NamedTestCaseDirectory("read"),
 				Check: resource.ComposeTestCheckFunc(
+					resource.TestCheckResourceAttrSet("data.elasticstack_elasticsearch_ingest_processor_user_agent.test", "id"),
 					resource.TestCheckResourceAttr("data.elasticstack_elasticsearch_ingest_processor_user_agent.test", "field", "agent"),
+					resource.TestCheckResourceAttr("data.elasticstack_elasticsearch_ingest_processor_user_agent.test", "ignore_missing", "false"),
 					CheckResourceJSON("data.elasticstack_elasticsearch_ingest_processor_user_agent.test", "json", expectedJSONUserAgent),
+				),
+			},
+			{
+				ProtoV6ProviderFactories: acctest.Providers,
+				ConfigDirectory:          acctest.NamedTestCaseDirectory("all_attributes"),
+				Check: resource.ComposeTestCheckFunc(
+					resource.TestCheckResourceAttrSet("data.elasticstack_elasticsearch_ingest_processor_user_agent.test", "id"),
+					resource.TestCheckResourceAttr("data.elasticstack_elasticsearch_ingest_processor_user_agent.test", "field", "http.request.headers.user-agent"),
+					resource.TestCheckResourceAttr("data.elasticstack_elasticsearch_ingest_processor_user_agent.test", "target_field", "user_agent_details"),
+					resource.TestCheckResourceAttr("data.elasticstack_elasticsearch_ingest_processor_user_agent.test", "regex_file", "custom-regexes.yml"),
+					resource.TestCheckResourceAttr("data.elasticstack_elasticsearch_ingest_processor_user_agent.test", "extract_device_type", "true"),
+					resource.TestCheckResourceAttr("data.elasticstack_elasticsearch_ingest_processor_user_agent.test", "ignore_missing", "true"),
+					resource.TestCheckResourceAttr("data.elasticstack_elasticsearch_ingest_processor_user_agent.test", "ignore_failure", "true"),
+					resource.TestCheckResourceAttr("data.elasticstack_elasticsearch_ingest_processor_user_agent.test", "description", "parse user agent"),
+					resource.TestCheckResourceAttr("data.elasticstack_elasticsearch_ingest_processor_user_agent.test", "if", "ctx.agent != null"),
+					resource.TestCheckResourceAttr("data.elasticstack_elasticsearch_ingest_processor_user_agent.test", "tag", "ua-tag"),
+					resource.TestCheckResourceAttr("data.elasticstack_elasticsearch_ingest_processor_user_agent.test", "on_failure.#", "1"),
+					resource.TestCheckResourceAttr("data.elasticstack_elasticsearch_ingest_processor_user_agent.test", "properties.#", "3"),
+					resource.TestCheckTypeSetElemAttr("data.elasticstack_elasticsearch_ingest_processor_user_agent.test", "properties.*", "name"),
+					resource.TestCheckTypeSetElemAttr("data.elasticstack_elasticsearch_ingest_processor_user_agent.test", "properties.*", "os"),
+					resource.TestCheckTypeSetElemAttr("data.elasticstack_elasticsearch_ingest_processor_user_agent.test", "properties.*", "device"),
+					CheckResourceJSON("data.elasticstack_elasticsearch_ingest_processor_user_agent.test", "json", expectedJSONUserAgentAllAttributes),
 				),
 			},
 		},
@@ -41,8 +65,36 @@ func TestAccDataSourceIngestProcessorUserAgent(t *testing.T) {
 }
 
 const expectedJSONUserAgent = `{
-	"user_agent": {
-		"field": "agent",
-		"ignore_missing": false
-	}
+  "user_agent": {
+    "ignore_failure": false,
+    "field": "agent",
+    "ignore_missing": false
+  }
+}`
+
+const expectedJSONUserAgentAllAttributes = `{
+  "user_agent": {
+    "description": "parse user agent",
+    "if": "ctx.agent != null",
+    "ignore_failure": true,
+    "on_failure": [
+      {
+        "set": {
+          "field": "error.message",
+          "value": "ua failed"
+        }
+      }
+    ],
+    "tag": "ua-tag",
+    "field": "http.request.headers.user-agent",
+    "target_field": "user_agent_details",
+    "ignore_missing": true,
+    "regex_file": "custom-regexes.yml",
+    "properties": [
+      "device",
+      "name",
+      "os"
+    ],
+    "extract_device_type": true
+  }
 }`

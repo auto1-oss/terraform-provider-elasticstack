@@ -1,8 +1,8 @@
 ---
-name: openspec-implementation-loop
-description: Orchestrates an end-to-end implementation loop for a single OpenSpec change: select a change, ask commit-only vs PR delivery, implement one top-level task at a time with a fresh dedicated subagent for each task, run review and verification subagents after each completed top-level task, feed findings back for fixes, push to origin, then either watch GitHub Actions on the branch (commit mode) or create a PR and watch PR checks while polling for and addressing PR reviews (PR mode). Use when the user wants to implement an approved OpenSpec proposal/change with iterative review and CI feedback.
-license: MIT
-compatibility: Requires openspec CLI, git, and GitHub CLI.
+name: "openspec-implementation-loop"
+description: "Orchestrates an end-to-end implementation loop for a single OpenSpec change: select a change, ask commit-only vs PR delivery, implement one top-level task at a time with a fresh dedicated subagent for each task, run review and verification subagents after each completed top-level task, feed findings back for fixes, push to origin, then either watch GitHub Actions on the branch (commit mode) or create a PR and delegate PR monitoring to the pr-monitoring-loop skill (PR mode). Use when the user wants to implement an approved OpenSpec proposal/change with iterative review and CI feedback."
+license: "MIT"
+compatibility: "Requires openspec CLI, git, and GitHub CLI."
 metadata:
   author: openspec
   version: "2.0"
@@ -24,7 +24,7 @@ Orchestrate an implementation loop around a single OpenSpec change.
 8. Send findings back to that task's implementor and repeat until clean, then move to the next top-level task
 9. Push the branch to `origin`
 10. **Commit mode**: Watch GitHub Actions on the pushed branch/commit  
-    **PR mode**: Create a PR, watch PR checks, run a deterministic PR-state poll on every cadence tick so CI and review feedback are checked together, add `verify-openspec` only after the current head is green and review feedback is addressed, and keep addressing feedback until the PR is approved for the current head
+    **PR mode**: Create a PR, then use the `pr-monitoring-loop` skill to monitor CI, reviews, comments, mergeability, and `verify-openspec` approval through watcher and delegate subagents
 11. Report final outcome
 
 **Steps**
@@ -252,43 +252,19 @@ Orchestrate an implementation loop around a single OpenSpec change.
     - use `gh pr create` (or equivalent) with an appropriate title and body tied to the OpenSpec change
     - record the PR number or URL
 
-    **PR polling loop**:
-    - use `.agents/skills/openspec-implementation-loop/check-pr-state.py <pr>` on every poll; it runs the required `gh` commands in one place and returns a single JSON payload covering PR checks, reviews, issue comments, review comments, and unresolved review threads
-    - after each push, restart the PR polling loop from the beginning for the new PR head commit
-    - on every poll, inspect both the check summary and the review summary from that script output; do not treat comment polling as a separate schedule
+    **State file**:
+    - the script auto-uses `.agents/skills/pr-monitoring-loop/scripts/state/.pr-monitor-<pr>.json` (gitignored), so subagents can simply invoke `check-pr-state.py <pr>` and `lastPolledAt` / seen IDs persist across watcher restarts without any explicit path management
+    - pass `--state-file <path>` only when you need isolation (e.g., parallel watchers on different branches that share a PR number, or tests). When you do override, pass the same path to every subagent in this loop
+    - do NOT put the state file under `.git/` — this repo uses git worktrees, where `.git` is a file that points at a worktree-specific git dir, which would fragment state across worktrees watching the same PR
 
-    Example:
-    ```bash
-    .agents/skills/openspec-implementation-loop/check-pr-state.py <pr>
-    ```
+    **Delegate PR monitoring to `pr-monitoring-loop`**:
+    - load and follow the `pr-monitoring-loop` skill for the entire PR monitoring phase
+    - start a delegate subagent for the PR instead of polling in this main implementation-loop agent
+    - instruct the delegate to invoke `.agents/skills/pr-monitoring-loop/scripts/check-pr-state.py <pr>` on every cadence tick (or use `--watch` with the cadence guidance documented in `pr-monitoring-loop`) so CI (commit-pinned), reviews, PR comments, review comments, unresolved threads, merge conflicts, and stale branch state are checked together. Append `--state-file <path>` only if you decided to override the default path above.
+    - allow the delegate to fix and push changes it judges simple, then perform the thread-resolution protocol for any addressed threads (reply with addressing commit SHA, then `resolveReviewThread`), and continue watching the new PR head
+    - when the delegate returns `delegate`, launch a fresh delegate subagent scoped only to the reported failure or feedback (with the same `--state-file`); after the delegate commits, pushes, replies, and resolves addressed threads, restart the watch cycle for the new head commit with a new delegate
 
-    **Polling cadence**:
-    - poll Build/Lint and other fast required checks once per minute until they complete
-    - if Build/Lint fails, collect the failing details immediately, launch a fresh write-capable implementor subagent scoped to the failure, ask it to fix and commit the issue, push, and then restart the polling loop for the new head commit without waiting for acceptance tests
-    - monitor acceptance-test jobs every 5 minutes while they are still running
-    - if an acceptance-test job fails, collect the failing details on that poll, launch a fresh write-capable implementor subagent scoped to the failure, ask it to fix and commit the issue, push, and then restart the polling loop for the new head commit
-
-    **Review comment handling during polling**:
-    - on each poll, use the script output to determine whether there are new or unresolved review threads, review comments, issue comments, or requested changes
-    - if there are actionable review comments, summarize the feedback
-    - launch a fresh write-capable implementor subagent scoped only to addressing that review feedback with minimal commits
-    - push updates; the PR updates automatically; then restart the polling loop for the new head commit
-    - when a review thread has been addressed, add a brief reply summarizing the fix and then resolve the thread
-    - only resolve threads that are actually addressed by the current PR state; leave unresolved anything that still needs reviewer confirmation or additional changes
-
-    **Add `verify-openspec` label only after the PR is ready**:
-    - decide whether to add the label based on the **current PR head commit**, not an older green run
-    - add `verify-openspec` only when all required CI for the current head commit is green **and** all known review comments have been addressed
-    - treat the label as a manual trigger for the OpenSpec verify workflow on the current PR state
-    - apply the label with GitHub CLI: `gh pr edit <pr> --add-label verify-openspec`
-    - record the time when the label was applied most recently
-    - after applying it, confirm the OpenSpec verify workflow starts for that PR; if later pushes change the head commit, wait until the new head is green and comments are addressed before applying the label again
-
-    **End condition for the PR polling loop**:
-    - continue polling after the label is applied
-    - end successfully only when CI is green and the `verify-openspec` workflow has **approved** the PR for the current head commit, not merely completed
-    - if 20 minutes pass after the most recent `verify-openspec` label application and approval has still not arrived, stop the loop and report that timeout state to the user
-    - also stop early if a failure or review issue cannot be resolved without user input
+    When monitoring in PR mode, tell the PR watcher to opt in to `verify-openspec` behavior per the `pr-monitoring-loop` skill. The `pr-monitoring-loop` skill defines when to apply the `verify-openspec` label (via `requiresOpenspecVerification`) and when the PR is considered verified (`runState == "approved"`). Do not restate those rules here.
 
 13. **Report final outcome**
 
@@ -312,6 +288,7 @@ Orchestrate an implementation loop around a single OpenSpec change.
 - **Critical reviewer**: reviews code quality and logic
 - **Spec reviewer**: checks the implementation against the approved OpenSpec change
 - **Coverage reviewer**: checks test coverage quality using the appropriate strategy
+- **PR watcher**: a fresh subagent using `pr-monitoring-loop` to poll PR state, directly fix simple actionable issues, and return non-simple work to the main agent for delegation to a fresh subagent
 
 **Guardrails**
 
@@ -327,6 +304,7 @@ Orchestrate an implementation loop around a single OpenSpec change.
 - Local review for each top-level task must include `make lint`, `make build`, and relevant acceptance tests run according to `dev-docs/high-level/testing.md`
 - Run reviewers in parallel whenever possible
 - Prefer actionable findings over style nitpicks
-- Feed review and CI failures back into the loop instead of fixing them ad hoc outside the loop
+- Feed local review and commit-mode CI failures back into the loop instead of fixing them ad hoc outside the loop
+- In PR mode, use `pr-monitoring-loop`; do not spend main-agent context on repeated PR polling
 - Keep commit sizes small and purpose-specific
 - Stop and ask the user if the process becomes ambiguous or stuck

@@ -62,10 +62,11 @@ resource "elasticstack_elasticsearch_index_lifecycle" "my_ilm" {
 
 ### Optional
 
-- `cold` (Block, Optional) The index is no longer being updated and is queried infrequently. The information still needs to be searchable, but it's okay if those queries are slower. (see [below for nested schema](#nestedblock--cold))
+- `cold` (Block, Optional) The index is no longer being updated and is queried infrequently. The information still needs to be searchable, but it is okay if those queries are slower. (see [below for nested schema](#nestedblock--cold))
 - `delete` (Block, Optional) The index is no longer needed and can safely be removed. (see [below for nested schema](#nestedblock--delete))
 - `elasticsearch_connection` (Block List) Elasticsearch connection configuration block. (see [below for nested schema](#nestedblock--elasticsearch_connection))
-- `frozen` (Block, Optional) The index is no longer being updated and is queried rarely. The information still needs to be searchable, but it's okay if those queries are extremely slow. (see [below for nested schema](#nestedblock--frozen))
+- `force_destroy` (Boolean) When true, the provider will clear index.lifecycle.name from any indices that reference this policy before deleting the policy.
+- `frozen` (Block, Optional) The index is no longer being updated and is queried rarely. The information still needs to be searchable, but it is okay if those queries are extremely slow. (see [below for nested schema](#nestedblock--frozen))
 - `hot` (Block, Optional) The index is actively being updated and queried. (see [below for nested schema](#nestedblock--hot))
 - `metadata` (String) Optional user metadata about the ilm policy. Must be valid JSON document.
 - `warm` (Block, Optional) The index is no longer being updated but is still being queried. (see [below for nested schema](#nestedblock--warm))
@@ -99,7 +100,7 @@ Optional:
 - `include` (String) Assigns an index to nodes that have at least one of the specified custom attributes. Must be valid JSON document.
 - `number_of_replicas` (Number) Number of replicas to assign to the index. Default: `0`
 - `require` (String) Assigns an index to nodes that have all of the specified custom attributes. Must be valid JSON document.
-- `total_shards_per_node` (Number) The maximum number of shards for the index on a single Elasticsearch node. Defaults to `-1` (unlimited). Supported from Elasticsearch version **7.16**
+- `total_shards_per_node` (Number) The maximum number of shards for the index on a single Elasticsearch node. Defaults to `-1` (unlimited).
 
 
 <a id="nestedblock--cold--downsample"></a>
@@ -344,7 +345,7 @@ Optional:
 - `include` (String) Assigns an index to nodes that have at least one of the specified custom attributes. Must be valid JSON document.
 - `number_of_replicas` (Number) Number of replicas to assign to the index. Default: `0`
 - `require` (String) Assigns an index to nodes that have all of the specified custom attributes. Must be valid JSON document.
-- `total_shards_per_node` (Number) The maximum number of shards for the index on a single Elasticsearch node. Defaults to `-1` (unlimited). Supported from Elasticsearch version **7.16**
+- `total_shards_per_node` (Number) The maximum number of shards for the index on a single Elasticsearch node. Defaults to `-1` (unlimited).
 
 
 <a id="nestedblock--warm--downsample"></a>

@@ -19,10 +19,11 @@ package agentpolicy
 
 import (
 	"context"
-	"fmt"
 
 	"github.com/elastic/terraform-provider-elasticstack/internal/clients"
 	"github.com/elastic/terraform-provider-elasticstack/internal/diagutil"
+	"github.com/elastic/terraform-provider-elasticstack/internal/entitycore"
+	"github.com/elastic/terraform-provider-elasticstack/internal/fleet"
 	"github.com/hashicorp/go-version"
 	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/path"
@@ -30,9 +31,10 @@ import (
 )
 
 var (
-	_ resource.Resource                = &agentPolicyResource{}
-	_ resource.ResourceWithConfigure   = &agentPolicyResource{}
-	_ resource.ResourceWithImportState = &agentPolicyResource{}
+	_ resource.Resource                = newAgentPolicyResource()
+	_ resource.ResourceWithConfigure   = newAgentPolicyResource()
+	_ resource.ResourceWithImportState = newAgentPolicyResource()
+	_ resource.ResourceWithModifyPlan  = newAgentPolicyResource()
 )
 
 var (
@@ -45,47 +47,48 @@ var (
 	MinVersionAgentFeatures       = version.Must(version.NewVersion("8.7.0"))
 	MinVersionAdvancedMonitoring  = version.Must(version.NewVersion("8.16.0"))
 	MinVersionAdvancedSettings    = version.Must(version.NewVersion("8.17.0"))
+	// MinVersionTamperProtection is the minimum stack version for setting agent policy tamper protection (is_protected).
+	MinVersionTamperProtection = version.Must(version.NewVersion("8.10.0"))
 )
 
-// NewResource is a helper function to simplify the provider implementation.
-func NewResource() resource.Resource {
-	return &agentPolicyResource{}
+// MonitoringRuntimeExperimentalSupported returns true if the given version
+// supports the monitoring_runtime_experimental advanced setting: 8.19.x or 9.1.0+.
+func MonitoringRuntimeExperimentalSupported(v *version.Version) bool {
+	if v == nil {
+		return false
+	}
+	segments := v.Segments()
+	if len(segments) < 2 {
+		return false
+	}
+	major, minor := segments[0], segments[1]
+	switch {
+	case major >= 10:
+		return true
+	case major == 9 && minor >= 1:
+		return true
+	case major == 8 && minor >= 19:
+		return true
+	default:
+		return false
+	}
 }
 
 type agentPolicyResource struct {
-	client *clients.ProviderClientFactory
+	*entitycore.ResourceBase
+	*fleet.SpaceImporter
 }
 
-func (r *agentPolicyResource) Configure(_ context.Context, req resource.ConfigureRequest, resp *resource.ConfigureResponse) {
-	factory, diags := clients.ConvertProviderDataToFactory(req.ProviderData)
-	resp.Diagnostics.Append(diags...)
-	if resp.Diagnostics.HasError() {
-		return
+func newAgentPolicyResource() *agentPolicyResource {
+	return &agentPolicyResource{
+		ResourceBase:  entitycore.NewResourceBase(entitycore.ComponentFleet, "agent_policy"),
+		SpaceImporter: fleet.NewSpaceImporter(path.Root("policy_id")),
 	}
-	r.client = factory
 }
 
-func (r *agentPolicyResource) Metadata(_ context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
-	resp.TypeName = fmt.Sprintf("%s_%s", req.ProviderTypeName, "fleet_agent_policy")
-}
-
-func (r *agentPolicyResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
-	var spaceID string
-	var policyID string
-
-	compID, diags := clients.CompositeIDFromStrFw(req.ID)
-	if diags.HasError() {
-		policyID = req.ID
-	} else {
-		spaceID = compID.ClusterID
-		policyID = compID.ResourceID
-	}
-
-	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("policy_id"), policyID)...)
-
-	if spaceID != "" {
-		resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("space_ids"), []string{spaceID})...)
-	}
+// NewResource is a helper function to simplify the provider implementation.
+func NewResource() resource.Resource {
+	return newAgentPolicyResource()
 }
 
 func (r *agentPolicyResource) buildFeatures(ctx context.Context, apiClient *clients.KibanaScopedClient) (features, diag.Diagnostics) {
@@ -134,15 +137,27 @@ func (r *agentPolicyResource) buildFeatures(ctx context.Context, apiClient *clie
 		return features{}, diagutil.FrameworkDiagsFromSDK(diags)
 	}
 
+	supportsTamperProtection, diags := apiClient.EnforceMinVersion(ctx, MinVersionTamperProtection)
+	if diags.HasError() {
+		return features{}, diagutil.FrameworkDiagsFromSDK(diags)
+	}
+
+	supportsMonitoringRuntimeExperimental, diags := apiClient.EnforceVersionCheck(ctx, MonitoringRuntimeExperimentalSupported)
+	if diags.HasError() {
+		return features{}, diagutil.FrameworkDiagsFromSDK(diags)
+	}
+
 	return features{
-		SupportsGlobalDataTags:      supportsGDT,
-		SupportsSupportsAgentless:   supportsSupportsAgentless,
-		SupportsInactivityTimeout:   supportsInactivityTimeout,
-		SupportsUnenrollmentTimeout: supportsUnenrollmentTimeout,
-		SupportsSpaceIDs:            supportsSpaceIDs,
-		SupportsRequiredVersions:    supportsRequiredVersions,
-		SupportsAgentFeatures:       supportsAgentFeatures,
-		SupportsAdvancedMonitoring:  supportsAdvancedMonitoring,
-		SupportsAdvancedSettings:    supportsAdvancedSettings,
+		SupportsGlobalDataTags:                supportsGDT,
+		SupportsSupportsAgentless:             supportsSupportsAgentless,
+		SupportsInactivityTimeout:             supportsInactivityTimeout,
+		SupportsUnenrollmentTimeout:           supportsUnenrollmentTimeout,
+		SupportsSpaceIDs:                      supportsSpaceIDs,
+		SupportsRequiredVersions:              supportsRequiredVersions,
+		SupportsAgentFeatures:                 supportsAgentFeatures,
+		SupportsAdvancedMonitoring:            supportsAdvancedMonitoring,
+		SupportsAdvancedSettings:              supportsAdvancedSettings,
+		SupportsMonitoringRuntimeExperimental: supportsMonitoringRuntimeExperimental,
+		SupportsTamperProtection:              supportsTamperProtection,
 	}, nil
 }

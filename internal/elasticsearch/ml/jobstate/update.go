@@ -64,7 +64,7 @@ func (r *mlJobStateResource) update(ctx context.Context, plan tfsdk.Plan, state 
 		return diags
 	}
 
-	client, fwDiags := r.client.GetElasticsearchClient(ctx, data.ElasticsearchConnection)
+	client, fwDiags := r.Client().GetElasticsearchClient(ctx, data.ElasticsearchConnection)
 	diags.Append(fwDiags...)
 	if diags.HasError() {
 		return diags
@@ -99,12 +99,9 @@ func (r *mlJobStateResource) update(ctx context.Context, plan tfsdk.Plan, state 
 		return diags
 	}
 
-	// Generate composite ID
 	compID, sdkDiags := client.ID(ctx, jobID)
-	if len(sdkDiags) > 0 {
-		for _, d := range sdkDiags {
-			diags.AddError(d.Summary, d.Detail)
-		}
+	diags.Append(diagutil.FrameworkDiagsFromSDK(sdkDiags)...)
+	if diags.HasError() {
 		return diags
 	}
 
@@ -122,7 +119,7 @@ func (r *mlJobStateResource) performStateTransition(ctx context.Context, data ML
 	jobID := data.JobID.ValueString()
 	desiredState := data.State.ValueString()
 	force := data.Force.ValueBool()
-	client, diags := r.client.GetElasticsearchClient(ctx, data.ElasticsearchConnection)
+	client, diags := r.Client().GetElasticsearchClient(ctx, data.ElasticsearchConnection)
 	if diags.HasError() {
 		return diags
 	}

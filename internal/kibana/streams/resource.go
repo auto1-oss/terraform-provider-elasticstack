@@ -19,41 +19,41 @@ package streams
 
 import (
 	"context"
-	"fmt"
 
-	"github.com/elastic/terraform-provider-elasticstack/internal/clients"
+	"github.com/elastic/terraform-provider-elasticstack/internal/entitycore"
 	"github.com/hashicorp/terraform-plugin-framework-validators/resourcevalidator"
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 )
 
 var (
-	_ resource.Resource                     = &Resource{}
-	_ resource.ResourceWithConfigure        = &Resource{}
-	_ resource.ResourceWithImportState      = &Resource{}
-	_ resource.ResourceWithConfigValidators = &Resource{}
+	_ resource.Resource                     = newResource()
+	_ resource.ResourceWithConfigure        = newResource()
+	_ resource.ResourceWithImportState      = newResource()
+	_ resource.ResourceWithConfigValidators = newResource()
 )
+
+type Resource struct {
+	*entitycore.KibanaResource[streamModel]
+}
+
+func newResource() *Resource {
+	return &Resource{
+		KibanaResource: entitycore.NewKibanaResource[streamModel](
+			entitycore.ComponentKibana,
+			"stream",
+			getSchema,
+			readStream,
+			deleteStream,
+			createStream,
+			updateStream,
+		),
+	}
+}
 
 // NewResource is a helper function to simplify the provider implementation.
 func NewResource() resource.Resource {
-	return &Resource{}
-}
-
-type Resource struct {
-	client *clients.ProviderClientFactory
-}
-
-func (r *Resource) Configure(_ context.Context, req resource.ConfigureRequest, resp *resource.ConfigureResponse) {
-	factory, diags := clients.ConvertProviderDataToFactory(req.ProviderData)
-	resp.Diagnostics.Append(diags...)
-	if resp.Diagnostics.HasError() {
-		return
-	}
-	r.client = factory
-}
-
-func (r *Resource) Metadata(_ context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
-	resp.TypeName = fmt.Sprintf("%s_%s", req.ProviderTypeName, "kibana_stream")
+	return newResource()
 }
 
 func (r *Resource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {

@@ -18,12 +18,15 @@
 package role_test
 
 import (
+	"context"
 	_ "embed"
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/elastic/terraform-provider-elasticstack/internal/acctest"
 	"github.com/elastic/terraform-provider-elasticstack/internal/clients"
+	esclient "github.com/elastic/terraform-provider-elasticstack/internal/clients/elasticsearch"
 	"github.com/elastic/terraform-provider-elasticstack/internal/elasticsearch/security/role"
 	"github.com/elastic/terraform-provider-elasticstack/internal/versionutils"
 	"github.com/hashicorp/go-version"
@@ -296,6 +299,87 @@ func TestAccResourceSecurityRoleFromSDK(t *testing.T) {
 	})
 }
 
+// TestAccResourceSecurityRoleDetectsOutOfBandDrift asserts that changes made
+// to a role outside Terraform (e.g. via Kibana UI or a direct Elasticsearch
+// API call) produce a non-empty plan after refresh, and that state is updated
+// to reflect the drifted values.
+//
+// Regression coverage for https://github.com/elastic/terraform-provider-elasticstack/issues/1693:
+// the Plugin Framework Read implementation previously wrote its result to
+// req.State (discarded) instead of resp.State (persisted), silently hiding
+// all drift on description, metadata, and other role attributes.
+func TestAccResourceSecurityRoleDetectsOutOfBandDrift(t *testing.T) {
+	// Skip the entire test on stacks that don't support the `description`
+	// role attribute. The step-level SkipFuncs already cover the apply/plan
+	// phases, but the out-of-band PreConfig PUT sends `description` in the
+	// body and would fail with "unexpected field [description]" on older
+	// stacks because PreConfig runs regardless of SkipFunc.
+	notSupported, err := versionutils.CheckIfVersionIsUnsupported(role.MinSupportedDescriptionVersion)()
+	if err != nil {
+		t.Fatalf("could not determine server version: %v", err)
+	}
+	if notSupported {
+		t.Skipf("skipping: TestAccResourceSecurityRoleDetectsOutOfBandDrift requires Elastic Stack >= %s (role description support)", role.MinSupportedDescriptionVersion)
+	}
+
+	roleName := sdkacctest.RandStringFromCharSet(10, sdkacctest.CharSetAlphaNum)
+
+	resource.Test(t, resource.TestCase{
+		PreCheck:     func() { acctest.PreCheck(t) },
+		CheckDestroy: checkResourceSecurityRoleDestroy,
+		Steps: []resource.TestStep{
+			{
+				ProtoV6ProviderFactories: acctest.Providers,
+				SkipFunc:                 versionutils.CheckIfVersionIsUnsupported(role.MinSupportedDescriptionVersion),
+				ConfigDirectory:          acctest.NamedTestCaseDirectory("initial"),
+				ConfigVariables:          config.Variables{"role_name": config.StringVariable(roleName)},
+				Check: resource.ComposeTestCheckFunc(
+					resource.TestCheckResourceAttr("elasticstack_elasticsearch_security_role.test", "description", "initial description"),
+					resource.TestCheckResourceAttr("elasticstack_elasticsearch_security_role.test", "metadata", `{"source":"terraform"}`),
+				),
+			},
+			{
+				ProtoV6ProviderFactories: acctest.Providers,
+				SkipFunc:                 versionutils.CheckIfVersionIsUnsupported(role.MinSupportedDescriptionVersion),
+				ConfigDirectory:          acctest.NamedTestCaseDirectory("initial"),
+				ConfigVariables:          config.Variables{"role_name": config.StringVariable(roleName)},
+				PreConfig: func() {
+					mutateRoleOutOfBand(t, roleName, `{
+  "cluster": ["monitor"],
+  "indices": [{"names":["logs-*"],"privileges":["read"]}],
+  "applications": [],
+  "run_as": [],
+  "metadata": {"source":"console"},
+  "description": "drifted description"
+}`)
+				},
+				PlanOnly:           true,
+				ExpectNonEmptyPlan: true,
+				Check: resource.ComposeTestCheckFunc(
+					resource.TestCheckResourceAttr("elasticstack_elasticsearch_security_role.test", "description", "drifted description"),
+					resource.TestCheckResourceAttr("elasticstack_elasticsearch_security_role.test", "metadata", `{"source":"console"}`),
+				),
+			},
+		},
+	})
+}
+
+func mutateRoleOutOfBand(t *testing.T, roleName, body string) {
+	t.Helper()
+	client, err := clients.NewAcceptanceTestingElasticsearchScopedClient()
+	if err != nil {
+		t.Fatalf("failed to create acceptance testing client: %v", err)
+	}
+	typedClient, err := client.GetESClient()
+	if err != nil {
+		t.Fatalf("failed to get Elasticsearch typed client: %v", err)
+	}
+	_, err = typedClient.Security.PutRole(roleName).Raw(strings.NewReader(body)).Do(t.Context())
+	if err != nil {
+		t.Fatalf("out-of-band PutRole failed: %v", err)
+	}
+}
+
 func checkResourceSecurityRoleDestroy(s *terraform.State) error {
 	client, err := clients.NewAcceptanceTestingElasticsearchScopedClient()
 	if err != nil {
@@ -308,19 +392,19 @@ func checkResourceSecurityRoleDestroy(s *terraform.State) error {
 		}
 		compID, _ := clients.CompositeIDFromStr(rs.Primary.ID)
 
-		esClient, err := client.GetESClient()
+		typedClient, err := client.GetESClient()
 		if err != nil {
 			return err
 		}
-		req := esClient.Security.GetRole.WithName(compID.ResourceID)
-		res, err := esClient.Security.GetRole(req)
+		_, err = typedClient.Security.GetRole().Name(compID.ResourceID).Do(context.Background())
 		if err != nil {
+			if esclient.IsNotFoundElasticsearchError(err) {
+				continue
+			}
 			return err
 		}
 
-		if res.StatusCode != 404 {
-			return fmt.Errorf("role (%s) still exists", compID.ResourceID)
-		}
+		return fmt.Errorf("role (%s) still exists", compID.ResourceID)
 	}
 	return nil
 }

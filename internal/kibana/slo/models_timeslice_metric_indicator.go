@@ -76,7 +76,7 @@ func buildTimesliceMetricItem(metric tfTimesliceMetricMetric, idx int) (kbapi.SL
 			Name:        metric.Name.ValueString(),
 			Aggregation: kbapi.SLOsTimesliceMetricPercentileMetricAggregation(agg),
 			Field:       metric.Field.ValueString(),
-			Percentile:  float32(metric.Percentile.ValueFloat64()),
+			Percentile:  metric.Percentile.ValueFloat64(),
 			Filter:      filter,
 		}
 		if err := item.FromSLOsTimesliceMetricPercentileMetric(pm); err != nil {
@@ -130,24 +130,24 @@ func (m tfModel) timesliceMetricIndicatorToAPI() (bool, kbapi.SLOsSloWithSummary
 				Comparator kbapi.SLOsIndicatorPropertiesTimesliceMetricParamsMetricComparator        `json:"comparator"`
 				Equation   string                                                                    `json:"equation"`
 				Metrics    []kbapi.SLOsIndicatorPropertiesTimesliceMetric_Params_Metric_Metrics_Item `json:"metrics"`
-				Threshold  float32                                                                   `json:"threshold"`
+				Threshold  float64                                                                   `json:"threshold"`
 			} `json:"metric"`
 			TimestampField string `json:"timestampField"`
 		}{
 			Index:          ind.Index.ValueString(),
-			DataViewId:     stringPtr(ind.DataViewID),
+			DataViewId:     typeutils.ValueStringPointer(ind.DataViewID),
 			TimestampField: ind.TimestampField.ValueString(),
-			Filter:         stringPtr(ind.Filter),
+			Filter:         typeutils.ValueStringPointer(ind.Filter),
 			Metric: struct {
 				Comparator kbapi.SLOsIndicatorPropertiesTimesliceMetricParamsMetricComparator        `json:"comparator"`
 				Equation   string                                                                    `json:"equation"`
 				Metrics    []kbapi.SLOsIndicatorPropertiesTimesliceMetric_Params_Metric_Metrics_Item `json:"metrics"`
-				Threshold  float32                                                                   `json:"threshold"`
+				Threshold  float64                                                                   `json:"threshold"`
 			}{
 				Metrics:    metrics,
 				Equation:   metricDef.Equation.ValueString(),
 				Comparator: kbapi.SLOsIndicatorPropertiesTimesliceMetricParamsMetricComparator(metricDef.Comparator.ValueString()),
-				Threshold:  float32(metricDef.Threshold.ValueFloat64()),
+				Threshold:  metricDef.Threshold.ValueFloat64(),
 			},
 		},
 	}
@@ -167,7 +167,7 @@ func (m *tfModel) populateFromTimesliceMetricIndicator(apiIndicator kbapi.SLOsIn
 	ind := tfTimesliceMetricIndicator{
 		Index:          types.StringValue(p.Index),
 		TimestampField: types.StringValue(p.TimestampField),
-		Filter:         stringOrNull(p.Filter),
+		Filter:         types.StringPointerValue(p.Filter),
 		DataViewID:     types.StringNull(),
 	}
 	if p.DataViewId != nil {
@@ -188,7 +188,7 @@ func (m *tfModel) populateFromTimesliceMetricIndicator(apiIndicator kbapi.SLOsIn
 			metric.Name = types.StringValue(pm.Name)
 			metric.Aggregation = types.StringValue(string(pm.Aggregation))
 			metric.Field = types.StringValue(pm.Field)
-			metric.Percentile = types.Float64Value(float64(pm.Percentile))
+			metric.Percentile = types.Float64Value(pm.Percentile)
 			metric.Filter = types.StringPointerValue(pm.Filter)
 		} else if dm, err := mm.AsSLOsTimesliceMetricDocCountMetric(); err == nil && string(dm.Aggregation) == timesliceMetricAggregationDocCount {
 			metric.Name = types.StringValue(dm.Name)
@@ -213,7 +213,7 @@ func (m *tfModel) populateFromTimesliceMetricIndicator(apiIndicator kbapi.SLOsIn
 		Metrics:    tm,
 		Equation:   types.StringValue(p.Metric.Equation),
 		Comparator: types.StringValue(string(p.Metric.Comparator)),
-		Threshold:  types.Float64Value(float64(p.Metric.Threshold)),
+		Threshold:  types.Float64Value(p.Metric.Threshold),
 	}}
 
 	m.TimesliceMetricIndicator = []tfTimesliceMetricIndicator{ind}

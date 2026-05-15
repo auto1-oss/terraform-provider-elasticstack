@@ -20,39 +20,44 @@ package templateilmattachment
 import (
 	"context"
 
-	"github.com/elastic/terraform-provider-elasticstack/internal/clients"
+	"github.com/elastic/terraform-provider-elasticstack/internal/entitycore"
 	"github.com/hashicorp/go-version"
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 )
 
 // Ensure provider defined types fully satisfy framework interfaces
-var _ resource.Resource = &Resource{}
-var _ resource.ResourceWithConfigure = &Resource{}
-var _ resource.ResourceWithImportState = &Resource{}
-
 var (
+	_ resource.Resource                = newResource()
+	_ resource.ResourceWithConfigure   = newResource()
+	_ resource.ResourceWithImportState = newResource()
+
 	MinVersion = version.Must(version.NewVersion("8.2.0"))
 )
 
-// NewResource creates a new resource instance.
-func NewResource() resource.Resource {
-	return &Resource{}
-}
-
 // Resource defines the resource implementation.
 type Resource struct {
-	client *clients.ProviderClientFactory
+	*entitycore.ElasticsearchResource[tfModel]
 }
 
-func (r *Resource) Metadata(_ context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
-	resp.TypeName = req.ProviderTypeName + "_elasticsearch_index_template_ilm_attachment"
+func newResource() *Resource {
+	createFn, updateFn := entitycore.PlaceholderElasticsearchWriteCallbacks[tfModel]()
+	return &Resource{
+		ElasticsearchResource: entitycore.NewElasticsearchResource[tfModel](
+			entitycore.ComponentElasticsearch,
+			"index_template_ilm_attachment",
+			getSchema,
+			readILMAttachment,
+			deleteILMAttachment,
+			createFn,
+			updateFn,
+		),
+	}
 }
 
-func (r *Resource) Configure(_ context.Context, req resource.ConfigureRequest, resp *resource.ConfigureResponse) {
-	client, diags := clients.ConvertProviderDataToFactory(req.ProviderData)
-	resp.Diagnostics.Append(diags...)
-	r.client = client
+// NewResource creates a new resource instance.
+func NewResource() resource.Resource {
+	return newResource()
 }
 
 func (r *Resource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {

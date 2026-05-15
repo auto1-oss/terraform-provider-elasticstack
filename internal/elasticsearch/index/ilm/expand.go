@@ -23,7 +23,7 @@ import (
 	"strings"
 
 	"github.com/elastic/terraform-provider-elasticstack/internal/models"
-	schemautil "github.com/elastic/terraform-provider-elasticstack/internal/utils"
+	"github.com/elastic/terraform-provider-elasticstack/internal/utils/typeutils"
 	"github.com/hashicorp/go-version"
 	"github.com/hashicorp/terraform-plugin-framework/diag"
 )
@@ -42,7 +42,7 @@ var ilmActionSettingOptions = map[string]struct {
 	"min_size":                 {def: "", minVersion: RolloverMinConditionsMinSupportedVersion},
 	"min_primary_shard_docs":   {def: 0, minVersion: RolloverMinConditionsMinSupportedVersion},
 	"min_primary_shard_size":   {def: "", minVersion: RolloverMinConditionsMinSupportedVersion},
-	"total_shards_per_node":    {skipEmptyCheck: true, def: -1, minVersion: version.Must(version.NewVersion("7.16.0"))},
+	"total_shards_per_node":    {skipEmptyCheck: true, def: -1},
 }
 
 func expandPhase(p map[string]any, serverVersion *version.Version) (*models.Phase, diag.Diagnostics) {
@@ -150,7 +150,7 @@ func expandAction(a []any, serverVersion *version.Version, settings ...string) (
 					continue
 				}
 
-				if options.skipEmptyCheck || !schemautil.IsEmpty(v) {
+				if options.skipEmptyCheck || !typeutils.IsEmpty(v) {
 					if setting == "include" || setting == "exclude" || setting == "require" {
 						res := make(map[string]any)
 						if err := json.Unmarshal([]byte(v.(string)), &res); err != nil {

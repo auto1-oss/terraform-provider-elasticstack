@@ -27,6 +27,7 @@ import (
 	"testing"
 
 	"github.com/elastic/terraform-provider-elasticstack/internal/acctest"
+	"github.com/elastic/terraform-provider-elasticstack/internal/acctest/checks"
 	"github.com/elastic/terraform-provider-elasticstack/internal/clients"
 	kibanaoapi "github.com/elastic/terraform-provider-elasticstack/internal/clients/kibanaoapi"
 	"github.com/elastic/terraform-provider-elasticstack/internal/versionutils"
@@ -63,7 +64,6 @@ func TestMain(m *testing.M) {
 }
 
 func TestAccResourceAlertingRule(t *testing.T) {
-	minSupportedVersion := version.Must(version.NewSemver("7.14.0"))
 	minSupportedFrequencyVersion := version.Must(version.NewSemver("8.7.0"))
 	minSupportedAlertsFilterVersion := version.Must(version.NewSemver("8.9.0"))
 	minSupportedAlertDelayVersion := version.Must(version.NewSemver("8.13.0"))
@@ -79,7 +79,6 @@ func TestAccResourceAlertingRule(t *testing.T) {
 		Steps: []resource.TestStep{
 			{
 				ProtoV6ProviderFactories: acctest.Providers,
-				SkipFunc:                 versionutils.CheckIfVersionIsUnsupported(minSupportedVersion),
 				ConfigDirectory:          acctest.NamedTestCaseDirectory("create"),
 				ConfigVariables: config.Variables{
 					"name":    config.StringVariable(ruleName),
@@ -98,7 +97,6 @@ func TestAccResourceAlertingRule(t *testing.T) {
 			// ImportState testing
 			{
 				ProtoV6ProviderFactories: acctest.Providers,
-				SkipFunc:                 versionutils.CheckIfVersionIsUnsupported(minSupportedVersion),
 				ResourceName:             "elasticstack_kibana_alerting_rule.test_rule",
 				ImportState:              true,
 				ImportStateVerify:        true,
@@ -113,7 +111,6 @@ func TestAccResourceAlertingRule(t *testing.T) {
 			},
 			{
 				ProtoV6ProviderFactories: acctest.Providers,
-				SkipFunc:                 versionutils.CheckIfVersionIsUnsupported(minSupportedVersion),
 				ConfigDirectory:          acctest.NamedTestCaseDirectory("update"),
 				ConfigVariables: config.Variables{
 					"name":    config.StringVariable(fmt.Sprintf("Updated %s", ruleName)),
@@ -300,7 +297,6 @@ func TestAccResourceAlertingRule(t *testing.T) {
 			},
 			{
 				ProtoV6ProviderFactories: acctest.Providers,
-				SkipFunc:                 versionutils.CheckIfVersionIsUnsupported(minSupportedVersion),
 				ConfigDirectory:          acctest.NamedTestCaseDirectory("actions_no_frequency_create"),
 				ConfigVariables: config.Variables{
 					"name":    config.StringVariable(ruleName),
@@ -329,7 +325,6 @@ func TestAccResourceAlertingRule(t *testing.T) {
 }
 
 func TestAccResourceAlertingRuleParamsLifecycle(t *testing.T) {
-	minSupportedVersion := version.Must(version.NewSemver("7.14.0"))
 
 	ruleName := sdkacctest.RandStringFromCharSet(22, sdkacctest.CharSetAlphaNum)
 	ruleID := uuid.New().String()
@@ -340,7 +335,6 @@ func TestAccResourceAlertingRuleParamsLifecycle(t *testing.T) {
 		Steps: []resource.TestStep{
 			{
 				ProtoV6ProviderFactories: acctest.Providers,
-				SkipFunc:                 versionutils.CheckIfVersionIsUnsupported(minSupportedVersion),
 				ConfigDirectory:          acctest.NamedTestCaseDirectory("create_explicit"),
 				ConfigVariables: config.Variables{
 					"name":    config.StringVariable(ruleName),
@@ -381,7 +375,6 @@ func TestAccResourceAlertingRuleParamsLifecycle(t *testing.T) {
 			},
 			{
 				ProtoV6ProviderFactories: acctest.Providers,
-				SkipFunc:                 versionutils.CheckIfVersionIsUnsupported(minSupportedVersion),
 				ConfigDirectory:          acctest.NamedTestCaseDirectory("remove_aggtype"),
 				ConfigVariables: config.Variables{
 					"name":    config.StringVariable(ruleName),
@@ -415,7 +408,6 @@ func TestAccResourceAlertingRuleParamsLifecycle(t *testing.T) {
 			},
 			{
 				ProtoV6ProviderFactories: acctest.Providers,
-				SkipFunc:                 versionutils.CheckIfVersionIsUnsupported(minSupportedVersion),
 				ConfigDirectory:          acctest.NamedTestCaseDirectory("add_aggtype"),
 				ConfigVariables: config.Variables{
 					"name":    config.StringVariable(ruleName),
@@ -455,7 +447,6 @@ func TestAccResourceAlertingRuleParamsLifecycle(t *testing.T) {
 }
 
 func TestAccResourceAlertingRuleEnabledFalseOnCreate(t *testing.T) {
-	minSupportedVersion := version.Must(version.NewSemver("7.14.0"))
 
 	ruleName := sdkacctest.RandStringFromCharSet(22, sdkacctest.CharSetAlphaNum)
 	ruleID := uuid.New().String()
@@ -466,7 +457,6 @@ func TestAccResourceAlertingRuleEnabledFalseOnCreate(t *testing.T) {
 		Steps: []resource.TestStep{
 			{
 				ProtoV6ProviderFactories: acctest.Providers,
-				SkipFunc:                 versionutils.CheckIfVersionIsUnsupported(minSupportedVersion),
 				ConfigDirectory:          acctest.NamedTestCaseDirectory("create"),
 				ConfigVariables: config.Variables{
 					"name":    config.StringVariable(ruleName),
@@ -522,7 +512,6 @@ func TestAccResourceAlertingRuleInconsistentParams(t *testing.T) {
 var testAccResourceAlertingRuleFromSDKCreateConfig string
 
 func TestAccResourceAlertingRuleFromSDK(t *testing.T) {
-	minSupportedVersion := version.Must(version.NewSemver("7.14.0"))
 
 	ruleName := sdkacctest.RandStringFromCharSet(22, sdkacctest.CharSetAlphaNum)
 	ruleID := uuid.New().String()
@@ -533,7 +522,6 @@ func TestAccResourceAlertingRuleFromSDK(t *testing.T) {
 		Steps: []resource.TestStep{
 			{
 				// Create the alerting rule with the last provider version where it was built on the SDK
-				SkipFunc: versionutils.CheckIfVersionIsUnsupported(minSupportedVersion),
 				ExternalProviders: map[string]resource.ExternalProvider{
 					"elasticstack": {
 						Source:            "elastic/elasticstack",
@@ -556,7 +544,6 @@ func TestAccResourceAlertingRuleFromSDK(t *testing.T) {
 			},
 			{
 				// Upgrade to current PFW provider
-				SkipFunc:                 versionutils.CheckIfVersionIsUnsupported(minSupportedVersion),
 				ProtoV6ProviderFactories: acctest.Providers,
 				ConfigDirectory:          acctest.NamedTestCaseDirectory("create"),
 				ConfigVariables: config.Variables{
@@ -829,34 +816,16 @@ func TestAccResourceAlertingRuleFrequencyExclusivity(t *testing.T) {
 	})
 }
 
-func checkResourceAlertingRuleDestroy(s *terraform.State) error {
-	client, err := clients.NewAcceptanceTestingKibanaScopedClient()
-	if err != nil {
-		return err
-	}
-
-	oapiClient, err := client.GetKibanaOapiClient()
-	if err != nil {
-		return err
-	}
-
-	for _, rs := range s.RootModule().Resources {
-		if rs.Type != "elasticstack_kibana_alerting_rule" {
-			continue
-		}
-		compID, _ := clients.CompositeIDFromStr(rs.Primary.ID)
-
-		rule, diags := kibanaoapi.GetAlertingRule(context.Background(), oapiClient, compID.ClusterID, compID.ResourceID)
+var checkResourceAlertingRuleDestroy = checks.KibanaResourceDestroyCheckCompositeID(
+	"elasticstack_kibana_alerting_rule",
+	func(ctx context.Context, client *kibanaoapi.Client, spaceID, ruleID string) (bool, error) {
+		rule, diags := kibanaoapi.GetAlertingRule(ctx, client, spaceID, ruleID)
 		if diags.HasError() {
-			return fmt.Errorf("Failed to get alerting rule: %v", diags)
+			return false, fmt.Errorf("Failed to get alerting rule: %v", diags)
 		}
-
-		if rule != nil {
-			return fmt.Errorf("Alerting rule (%s) still exists", compID.ResourceID)
-		}
-	}
-	return nil
-}
+		return rule != nil, nil
+	},
+)
 
 func testCheckAlertingRuleAPIParams(resourceName string, check func(params map[string]any) error) resource.TestCheckFunc {
 	return func(s *terraform.State) error {

@@ -21,6 +21,7 @@ import (
 	"fmt"
 
 	"github.com/elastic/terraform-provider-elasticstack/generated/kbapi"
+	"github.com/elastic/terraform-provider-elasticstack/internal/utils/typeutils"
 	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 )
@@ -48,28 +49,62 @@ type tfMetricCustomMetric struct {
 
 func buildGoodMetricItem(metric tfMetricCustomMetric) (kbapi.SLOsIndicatorPropertiesCustomMetric_Params_Good_Metrics_Item, error) {
 	var item kbapi.SLOsIndicatorPropertiesCustomMetric_Params_Good_Metrics_Item
-	m0 := kbapi.SLOsIndicatorPropertiesCustomMetricParamsGoodMetrics0{
-		Name:        metric.Name.ValueString(),
-		Aggregation: kbapi.SLOsIndicatorPropertiesCustomMetricParamsGoodMetrics0Aggregation(metric.Aggregation.ValueString()),
-		Field:       metric.Field.ValueString(),
-		Filter:      stringPtr(metric.Filter),
-	}
-	if err := item.FromSLOsIndicatorPropertiesCustomMetricParamsGoodMetrics0(m0); err != nil {
-		return kbapi.SLOsIndicatorPropertiesCustomMetric_Params_Good_Metrics_Item{}, err
+	if metric.Aggregation.ValueString() == string(kbapi.SLOsIndicatorPropertiesCustomMetricParamsGoodMetrics1AggregationDocCount) {
+		if !metric.Field.IsNull() && !metric.Field.IsUnknown() {
+			return kbapi.SLOsIndicatorPropertiesCustomMetric_Params_Good_Metrics_Item{}, fmt.Errorf("field must not be set when aggregation is doc_count")
+		}
+		m1 := kbapi.SLOsIndicatorPropertiesCustomMetricParamsGoodMetrics1{
+			Name:        metric.Name.ValueString(),
+			Aggregation: kbapi.SLOsIndicatorPropertiesCustomMetricParamsGoodMetrics1Aggregation(metric.Aggregation.ValueString()),
+			Filter:      typeutils.ValueStringPointer(metric.Filter),
+		}
+		if err := item.FromSLOsIndicatorPropertiesCustomMetricParamsGoodMetrics1(m1); err != nil {
+			return kbapi.SLOsIndicatorPropertiesCustomMetric_Params_Good_Metrics_Item{}, err
+		}
+	} else {
+		if metric.Field.IsNull() || metric.Field.IsUnknown() || metric.Field.ValueString() == "" {
+			return kbapi.SLOsIndicatorPropertiesCustomMetric_Params_Good_Metrics_Item{}, fmt.Errorf("field is required when aggregation is not doc_count")
+		}
+		m0 := kbapi.SLOsIndicatorPropertiesCustomMetricParamsGoodMetrics0{
+			Name:        metric.Name.ValueString(),
+			Aggregation: kbapi.SLOsIndicatorPropertiesCustomMetricParamsGoodMetrics0Aggregation(metric.Aggregation.ValueString()),
+			Field:       metric.Field.ValueString(),
+			Filter:      typeutils.ValueStringPointer(metric.Filter),
+		}
+		if err := item.FromSLOsIndicatorPropertiesCustomMetricParamsGoodMetrics0(m0); err != nil {
+			return kbapi.SLOsIndicatorPropertiesCustomMetric_Params_Good_Metrics_Item{}, err
+		}
 	}
 	return item, nil
 }
 
 func buildTotalMetricItem(metric tfMetricCustomMetric) (kbapi.SLOsIndicatorPropertiesCustomMetric_Params_Total_Metrics_Item, error) {
 	var item kbapi.SLOsIndicatorPropertiesCustomMetric_Params_Total_Metrics_Item
-	m0 := kbapi.SLOsIndicatorPropertiesCustomMetricParamsTotalMetrics0{
-		Name:        metric.Name.ValueString(),
-		Aggregation: kbapi.SLOsIndicatorPropertiesCustomMetricParamsTotalMetrics0Aggregation(metric.Aggregation.ValueString()),
-		Field:       metric.Field.ValueString(),
-		Filter:      stringPtr(metric.Filter),
-	}
-	if err := item.FromSLOsIndicatorPropertiesCustomMetricParamsTotalMetrics0(m0); err != nil {
-		return kbapi.SLOsIndicatorPropertiesCustomMetric_Params_Total_Metrics_Item{}, err
+	if metric.Aggregation.ValueString() == string(kbapi.SLOsIndicatorPropertiesCustomMetricParamsTotalMetrics1AggregationDocCount) {
+		if !metric.Field.IsNull() && !metric.Field.IsUnknown() {
+			return kbapi.SLOsIndicatorPropertiesCustomMetric_Params_Total_Metrics_Item{}, fmt.Errorf("field must not be set when aggregation is doc_count")
+		}
+		m1 := kbapi.SLOsIndicatorPropertiesCustomMetricParamsTotalMetrics1{
+			Name:        metric.Name.ValueString(),
+			Aggregation: kbapi.SLOsIndicatorPropertiesCustomMetricParamsTotalMetrics1Aggregation(metric.Aggregation.ValueString()),
+			Filter:      typeutils.ValueStringPointer(metric.Filter),
+		}
+		if err := item.FromSLOsIndicatorPropertiesCustomMetricParamsTotalMetrics1(m1); err != nil {
+			return kbapi.SLOsIndicatorPropertiesCustomMetric_Params_Total_Metrics_Item{}, err
+		}
+	} else {
+		if metric.Field.IsNull() || metric.Field.IsUnknown() || metric.Field.ValueString() == "" {
+			return kbapi.SLOsIndicatorPropertiesCustomMetric_Params_Total_Metrics_Item{}, fmt.Errorf("field is required when aggregation is not doc_count")
+		}
+		m0 := kbapi.SLOsIndicatorPropertiesCustomMetricParamsTotalMetrics0{
+			Name:        metric.Name.ValueString(),
+			Aggregation: kbapi.SLOsIndicatorPropertiesCustomMetricParamsTotalMetrics0Aggregation(metric.Aggregation.ValueString()),
+			Field:       metric.Field.ValueString(),
+			Filter:      typeutils.ValueStringPointer(metric.Filter),
+		}
+		if err := item.FromSLOsIndicatorPropertiesCustomMetricParamsTotalMetrics0(m0); err != nil {
+			return kbapi.SLOsIndicatorPropertiesCustomMetric_Params_Total_Metrics_Item{}, err
+		}
 	}
 	return item, nil
 }
@@ -123,8 +158,8 @@ func (m tfModel) metricCustomIndicatorToAPI() (bool, kbapi.SLOsSloWithSummaryRes
 			} `json:"total"`
 		}{
 			Index:          ind.Index.ValueString(),
-			DataViewId:     stringPtr(ind.DataViewID),
-			Filter:         stringPtr(ind.Filter),
+			DataViewId:     typeutils.ValueStringPointer(ind.DataViewID),
+			Filter:         typeutils.ValueStringPointer(ind.Filter),
 			TimestampField: ind.TimestampField.ValueString(),
 			Good: struct {
 				Equation string                                                               `json:"equation"`
@@ -158,7 +193,7 @@ func (m *tfModel) populateFromMetricCustomIndicator(apiIndicator kbapi.SLOsIndic
 	ind := tfMetricCustomIndicator{
 		Index:          types.StringValue(p.Index),
 		TimestampField: types.StringValue(p.TimestampField),
-		Filter:         stringOrNull(p.Filter),
+		Filter:         types.StringPointerValue(p.Filter),
 		DataViewID:     types.StringNull(),
 	}
 	if p.DataViewId != nil {
@@ -175,7 +210,7 @@ func (m *tfModel) populateFromMetricCustomIndicator(apiIndicator kbapi.SLOsIndic
 				Name:        types.StringValue(m1.Name),
 				Aggregation: types.StringValue(string(m1.Aggregation)),
 				Field:       types.StringNull(),
-				Filter:      stringOrNull(m1.Filter),
+				Filter:      types.StringPointerValue(m1.Filter),
 			})
 		} else {
 			m0, _ := mtr.AsSLOsIndicatorPropertiesCustomMetricParamsGoodMetrics0()
@@ -187,7 +222,7 @@ func (m *tfModel) populateFromMetricCustomIndicator(apiIndicator kbapi.SLOsIndic
 				Name:        types.StringValue(m0.Name),
 				Aggregation: types.StringValue(string(m0.Aggregation)),
 				Field:       types.StringValue(m0.Field),
-				Filter:      stringOrNull(m0.Filter),
+				Filter:      types.StringPointerValue(m0.Filter),
 			})
 		}
 	}
@@ -201,7 +236,7 @@ func (m *tfModel) populateFromMetricCustomIndicator(apiIndicator kbapi.SLOsIndic
 				Name:        types.StringValue(m1.Name),
 				Aggregation: types.StringValue(string(m1.Aggregation)),
 				Field:       types.StringNull(),
-				Filter:      stringOrNull(m1.Filter),
+				Filter:      types.StringPointerValue(m1.Filter),
 			})
 		} else {
 			m0, _ := mtr.AsSLOsIndicatorPropertiesCustomMetricParamsTotalMetrics0()
@@ -213,7 +248,7 @@ func (m *tfModel) populateFromMetricCustomIndicator(apiIndicator kbapi.SLOsIndic
 				Name:        types.StringValue(m0.Name),
 				Aggregation: types.StringValue(string(m0.Aggregation)),
 				Field:       types.StringValue(m0.Field),
-				Filter:      stringOrNull(m0.Filter),
+				Filter:      types.StringPointerValue(m0.Filter),
 			})
 		}
 	}

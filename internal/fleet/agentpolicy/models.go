@@ -25,7 +25,6 @@ import (
 	"time"
 
 	"github.com/elastic/terraform-provider-elasticstack/generated/kbapi"
-	"github.com/elastic/terraform-provider-elasticstack/internal/utils"
 	"github.com/elastic/terraform-provider-elasticstack/internal/utils/customtypes"
 	"github.com/elastic/terraform-provider-elasticstack/internal/utils/typeutils"
 
@@ -50,16 +49,29 @@ type apiAgentFeature = struct {
 	Name    string `json:"name"`
 }
 
+func agentFeaturesFromPolicy(p *kbapi.AgentPolicy) []apiAgentFeature {
+	if p == nil || p.AgentFeatures == nil {
+		return nil
+	}
+	out := make([]apiAgentFeature, len(*p.AgentFeatures))
+	for i, f := range *p.AgentFeatures {
+		out[i] = apiAgentFeature{Enabled: f.Enabled, Name: f.Name}
+	}
+	return out
+}
+
 type features struct {
-	SupportsGlobalDataTags      bool
-	SupportsSupportsAgentless   bool
-	SupportsInactivityTimeout   bool
-	SupportsUnenrollmentTimeout bool
-	SupportsSpaceIDs            bool
-	SupportsRequiredVersions    bool
-	SupportsAgentFeatures       bool
-	SupportsAdvancedMonitoring  bool
-	SupportsAdvancedSettings    bool
+	SupportsGlobalDataTags                bool
+	SupportsSupportsAgentless             bool
+	SupportsInactivityTimeout             bool
+	SupportsUnenrollmentTimeout           bool
+	SupportsSpaceIDs                      bool
+	SupportsRequiredVersions              bool
+	SupportsAgentFeatures                 bool
+	SupportsAdvancedMonitoring            bool
+	SupportsAdvancedSettings              bool
+	SupportsMonitoringRuntimeExperimental bool
+	SupportsTamperProtection              bool
 }
 
 type globalDataTagsItemModel struct {
@@ -80,6 +92,7 @@ type agentPolicyModel struct {
 	DownloadSourceID          types.String         `tfsdk:"download_source_id"`
 	MonitorLogs               types.Bool           `tfsdk:"monitor_logs"`
 	MonitorMetrics            types.Bool           `tfsdk:"monitor_metrics"`
+	IsProtected               types.Bool           `tfsdk:"is_protected"`
 	SysMonitoring             types.Bool           `tfsdk:"sys_monitoring"`
 	SkipDestroy               types.Bool           `tfsdk:"skip_destroy"`
 	HostNameFormat            types.String         `tfsdk:"host_name_format"`
@@ -100,10 +113,38 @@ func (model *agentPolicyModel) populateFromAPI(ctx context.Context, data *kbapi.
 
 	model.ID = types.StringValue(data.Id)
 	model.PolicyID = types.StringValue(data.Id)
-	model.DataOutputID = types.StringPointerValue(data.DataOutputId)
-	model.Description = types.StringPointerValue(data.Description)
-	model.DownloadSourceID = types.StringPointerValue(data.DownloadSourceId)
-	model.FleetServerHostID = types.StringPointerValue(data.FleetServerHostId)
+	// The Fleet update API treats omitted optional *string fields as
+	// "preserve existing value". When the user removes one of these fields
+	// from configuration, the provider sends nil (omitted via omitempty) and
+	// the API response continues to report the previous server-side value.
+	// Writing that value into state would conflict with the planned null and
+	// trigger "Provider produced inconsistent result after apply". Preserve
+	// the configured null in state instead; the Fleet-side value is
+	// intentionally retained.
+	preserveNullStr := func(current types.String, apiVal *string) types.String {
+		if current.IsNull() && apiVal != nil && *apiVal != "" {
+			return types.StringNull()
+		}
+		return types.StringPointerValue(apiVal)
+	}
+	model.DataOutputID = preserveNullStr(model.DataOutputID, data.DataOutputId)
+	// The Fleet API normalizes an omitted description to an empty string in
+	// its response body. When the user's plan omits description (null), that
+	// empty string would be written to state and trigger "Provider produced
+	// inconsistent result after apply: was null, but now cty.StringVal("")".
+	// Treat an API empty-string as equivalent to null when the configured
+	// value is already null. Kibana treats null and "" as equivalent for
+	// this field. See https://github.com/elastic/terraform-provider-elasticstack/issues/993.
+	apiEmpty := data.Description != nil && *data.Description == ""
+	if apiEmpty && model.Description.IsNull() {
+		// Explicit no-op: keep the null we already have in state so the
+		// plan/apply round-trip stays consistent.
+		model.Description = types.StringNull()
+	} else {
+		model.Description = types.StringPointerValue(data.Description)
+	}
+	model.DownloadSourceID = preserveNullStr(model.DownloadSourceID, data.DownloadSourceId)
+	model.FleetServerHostID = preserveNullStr(model.FleetServerHostID, data.FleetServerHostId)
 
 	if data.MonitoringEnabled != nil {
 		if slices.Contains(*data.MonitoringEnabled, kbapi.AgentPolicyMonitoringEnabledLogs) {
@@ -120,7 +161,9 @@ func (model *agentPolicyModel) populateFromAPI(ctx context.Context, data *kbapi.
 		model.MonitorMetrics = types.BoolValue(false)
 	}
 
-	model.MonitoringOutputID = types.StringPointerValue(data.MonitoringOutputId)
+	model.IsProtected = types.BoolValue(data.IsProtected)
+
+	model.MonitoringOutputID = preserveNullStr(model.MonitoringOutputID, data.MonitoringOutputId)
 	model.Name = types.StringValue(data.Name)
 	model.Namespace = types.StringValue(data.Namespace)
 	model.SupportsAgentless = types.BoolPointerValue(data.SupportsAgentless)
@@ -154,10 +197,10 @@ func (model *agentPolicyModel) populateFromAPI(ctx context.Context, data *kbapi.
 	} else {
 		model.UnenrollmentTimeout = customtypes.NewDurationNull()
 	}
-	if schemautil.Deref(data.GlobalDataTags) != nil {
+	if typeutils.Deref(data.GlobalDataTags) != nil {
 		diags := diag.Diagnostics{}
 		var map0 = make(map[string]globalDataTagsItemModel)
-		for _, v := range schemautil.Deref(data.GlobalDataTags) {
+		for _, v := range typeutils.Deref(data.GlobalDataTags) {
 			maybeFloat, err := v.Value.AsAgentPolicyGlobalDataTagsItemValue1()
 			if err != nil {
 				maybeString, err := v.Value.AsAgentPolicyGlobalDataTagsItemValue0()
@@ -360,6 +403,22 @@ func (model *agentPolicyModel) toAPICreateModel(ctx context.Context, feat featur
 		Namespace:          model.Namespace.ValueString(),
 	}
 
+	if typeutils.IsKnown(model.IsProtected) {
+		if model.IsProtected.ValueBool() && !feat.SupportsTamperProtection {
+			return kbapi.PostFleetAgentPoliciesJSONRequestBody{}, diag.Diagnostics{
+				diag.NewAttributeErrorDiagnostic(
+					path.Root("is_protected"),
+					"Unsupported Elasticsearch version",
+					fmt.Sprintf("Tamper protection (`is_protected`) is only supported in Elastic Stack %s and above", MinVersionTamperProtection),
+				),
+			}
+		}
+		if feat.SupportsTamperProtection {
+			v := model.IsProtected.ValueBool()
+			body.IsProtected = &v
+		}
+	}
+
 	if typeutils.IsKnown(model.SupportsAgentless) {
 		if !feat.SupportsSupportsAgentless {
 			return kbapi.PostFleetAgentPoliciesJSONRequestBody{}, diag.Diagnostics{
@@ -472,7 +531,11 @@ func (model *agentPolicyModel) toAPICreateModel(ctx context.Context, feat featur
 				),
 			}
 		}
-		body.AdvancedSettings = model.convertAdvancedSettingsToAPI(ctx)
+		advancedSettings, diags := model.convertAdvancedSettingsToAPI(ctx, feat)
+		if diags.HasError() {
+			return kbapi.PostFleetAgentPoliciesJSONRequestBody{}, diags
+		}
+		body.AdvancedSettings = advancedSettings
 	}
 
 	// Handle advanced monitoring options
@@ -514,6 +577,22 @@ func (model *agentPolicyModel) toAPIUpdateModel(ctx context.Context, feat featur
 		MonitoringOutputId: model.MonitoringOutputID.ValueStringPointer(),
 		Name:               model.Name.ValueString(),
 		Namespace:          model.Namespace.ValueString(),
+	}
+
+	if typeutils.IsKnown(model.IsProtected) {
+		if model.IsProtected.ValueBool() && !feat.SupportsTamperProtection {
+			return kbapi.PutFleetAgentPoliciesAgentpolicyidJSONRequestBody{}, diag.Diagnostics{
+				diag.NewAttributeErrorDiagnostic(
+					path.Root("is_protected"),
+					"Unsupported Elasticsearch version",
+					fmt.Sprintf("Tamper protection (`is_protected`) is only supported in Elastic Stack %s and above", MinVersionTamperProtection),
+				),
+			}
+		}
+		if feat.SupportsTamperProtection {
+			v := model.IsProtected.ValueBool()
+			body.IsProtected = &v
+		}
 	}
 
 	if typeutils.IsKnown(model.SupportsAgentless) {
@@ -631,7 +710,11 @@ func (model *agentPolicyModel) toAPIUpdateModel(ctx context.Context, feat featur
 				),
 			}
 		}
-		body.AdvancedSettings = model.convertAdvancedSettingsToAPI(ctx)
+		advancedSettings, diags := model.convertAdvancedSettingsToAPI(ctx, feat)
+		if diags.HasError() {
+			return kbapi.PutFleetAgentPoliciesAgentpolicyidJSONRequestBody{}, diags
+		}
+		body.AdvancedSettings = advancedSettings
 	}
 
 	// Handle advanced monitoring options

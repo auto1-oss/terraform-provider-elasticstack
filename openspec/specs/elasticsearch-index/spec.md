@@ -127,9 +127,7 @@ resource "elasticstack_elasticsearch_index" "example" {
   }
 }
 ```
-
 ## Requirements
-
 ### Requirement: Index name validation for static and date math names
 
 The `name` attribute on `elasticstack_elasticsearch_index` SHALL accept either a static index name that matches the existing lowercase index-name rules or a plain Elasticsearch date math index name expression. Validation SHALL keep these paths separate by using `stringvalidator.Any(...)` with the static-name regex `^[a-z0-9!$%&'()+.;=@[\]^{}~_-]+$` and the date-math regex `^<[^-_+][a-z0-9!$%&'()+.;=@[\]^{}~_-]*\{[^<>]+\}>$`. The date-math regex enforces that: the name cannot start with `-`, `_`, or `+`; the static prefix consists only of valid index-name characters; and the date math section `{...}` appears at the end immediately before the closing `>` (no suffix after the brace). Values that satisfy neither regex branch SHALL be rejected during schema validation. When a validated date math name is used to create an index, the provider SHALL URI-encode that name before sending it in the Create Index API path.
@@ -186,13 +184,15 @@ The resource SHALL support import by accepting an `id` value directly via `Impor
 
 ### Requirement: Lifecycle — static settings require replacement (REQ-009)
 
-Changing the `name` attribute SHALL require resource replacement. Changing any static index setting (`number_of_shards`, `number_of_routing_shards`, `codec`, `routing_partition_size`, `load_fixed_bitset_filters_eagerly`, `shard_check_on_startup`, `sort_field`, `sort_order`, `mapping_coerce`) SHALL also require resource replacement, because Elasticsearch does not allow these to be changed on an existing index.
+In addition to the existing static settings listed in REQ-009, entries in the new `sort` `ListNestedAttribute` SHALL also trigger resource replacement when changed, subject to the migration suppression defined in REQ-SORT-03. Specifically, changing any of `sort[*].field`, `sort[*].order`, `sort[*].missing`, or `sort[*].mode` SHALL require replacement. The deprecated `sort_field` attribute SHALL continue to require replace when changed, except when `sort` is simultaneously being introduced in the plan (REQ-SORT-03 governs in that case).
 
-#### Scenario: Name change forces new
+#### Scenario: Changing an existing `sort` entry's `order` requires replace
 
-- GIVEN an existing index resource
-- WHEN the `name` attribute is changed in configuration
-- THEN Terraform SHALL plan to destroy and recreate the resource
+- **GIVEN** an existing index managed with `sort = [{ field = "date", order = "asc" }]`
+- **WHEN** the configuration changes to `sort = [{ field = "date", order = "desc" }]`
+- **THEN** Terraform SHALL plan to destroy and recreate the resource
+
+---
 
 ### Requirement: Connection (REQ-010–REQ-011)
 
@@ -224,79 +224,124 @@ When `deletion_protection` is `true` (the default), the resource SHALL refuse to
 
 On create, the resource SHALL build an API model from the plan (including settings, mappings, and aliases) and submit a Create Index request using the configured `name` together with the configured `wait_for_active_shards`, `master_timeout`, and `timeout` parameters. When the configured `name` is a validated date math expression, the provider SHALL URI-encode it before sending the Create Index API request path. After a successful create, the resource SHALL capture the concrete index name returned by the Create Index API response, store it in `concrete_name`, compute `id` from the cluster UUID and that concrete name, and then perform a read to refresh all computed attributes in state. That post-create read SHALL preserve the configured `name` value in state rather than replacing it with the concrete index name.
 
+When `use_existing` is `true` and the configured `name` is a static index name, the resource SHALL first call the Get Index API for that name. If the index already exists, the resource SHALL adopt it as defined by the "Opt-in adoption of existing indices via `use_existing`" requirement, in which case the Create Index API SHALL NOT be called. If the index does not exist, the resource SHALL proceed with the normal create path described above. When `use_existing` is `true` and the configured `name` is a date math expression, the resource SHALL emit a warning diagnostic and proceed with the normal create path without performing any existence check.
+
 #### Scenario: Serverless — master_timeout and wait_for_active_shards omitted
 
-- GIVEN the Elasticsearch server flavor is `serverless`
-- WHEN a create request is issued
-- THEN `master_timeout` and `wait_for_active_shards` SHALL be omitted from the API call parameters
+- **GIVEN** the Elasticsearch server flavor is `serverless`
+- **WHEN** a create request is issued
+- **THEN** `master_timeout` and `wait_for_active_shards` SHALL be omitted from the API call parameters
 
 #### Scenario: Date math create stores configured and concrete names separately
 
 - **WHEN** the configuration uses a plain date math index name and Elasticsearch creates a concrete index from it
 - **THEN** state SHALL preserve the configured expression in `name` and store the concrete created index in `concrete_name`
 
+#### Scenario: `use_existing = true` short-circuits the Create Index API for an existing index
+
+- **GIVEN** `use_existing = true`, `name` is a static index name, and the index already exists in Elasticsearch
+- **WHEN** create runs
+- **THEN** the resource SHALL NOT call the Create Index API
+- **AND** the resource SHALL run the adoption flow
+
+#### Scenario: `use_existing = true` falls through to the normal create when the index does not exist
+
+- **GIVEN** `use_existing = true`, `name` is a static index name, and no index with that name exists in Elasticsearch
+- **WHEN** create runs
+- **THEN** the resource SHALL call the Create Index API as it would when `use_existing = false`
+
 ### Requirement: Update flow (REQ-015–REQ-018)
 
-On update, the resource SHALL only call the relevant update APIs when the corresponding values have changed. Alias changes SHALL be applied by deleting aliases removed from config (via Delete Alias API) and upserting all aliases present in plan (via Put Alias API). Dynamic setting changes SHALL be applied by calling the Put Settings API with the diff, setting removed dynamic settings to `null` in the request. Mapping changes SHALL be applied by calling the Put Mapping API when `mappings` has semantically changed. All update APIs SHALL target the persisted concrete index identity from state / `id`, not the configured `name`. After all updates, the resource SHALL perform a read to refresh state while preserving any configured `name` already stored in state.
+On update, the resource SHALL only call the relevant update APIs when the corresponding values have changed. Alias changes SHALL be applied by deleting aliases removed from config (via Delete Alias API) and upserting all aliases present in plan (via Put Alias API). Dynamic setting changes SHALL be applied by calling the Put Settings API with the diff, setting removed dynamic settings to `null` in the request. Mapping changes SHALL be applied by calling the Put Mapping API only when the user-owned mapping intent has semantically changed. Template-injected mapping content that appears in the Elasticsearch Get Index API response SHALL NOT by itself cause a mapping update, replacement, provider inconsistent-result error, or non-empty follow-up plan. All update APIs SHALL target the persisted concrete index identity from state / `id`, not the configured `name`. After all updates, the resource SHALL perform a read to refresh state while preserving any configured `name` already stored in state.
 
 #### Scenario: Removed alias is deleted
 
-- GIVEN an alias exists in state but is absent from the plan
-- WHEN update runs
-- THEN the resource SHALL call the Delete Alias API for that alias against the concrete managed index
+- WHEN state has alias `old_alias` and config does not
+- THEN update SHALL call the Delete Alias API for `old_alias`
 
-#### Scenario: Removed dynamic setting set to null
+#### Scenario: Removed dynamic setting is nulled
 
-- GIVEN a dynamic setting is present in state but absent from the plan
+- WHEN state has a dynamic setting value and config removes it
 - WHEN update runs
 - THEN the resource SHALL send that setting as `null` in the Put Settings request
 
+#### Scenario: Template-injected mappings do not cause mapping update
+
+- **GIVEN** an index is created with user-owned `mappings`
+- **AND** a matching index template injects additional mapping `properties`, `dynamic_templates`, or other top-level mapping keys
+- **WHEN** Terraform refreshes and plans the same index configuration
+- **THEN** the resource SHALL treat the template-injected mapping content as non-drift and SHALL NOT call the Put Mapping API solely for those template-owned differences
+
 ### Requirement: Read (REQ-019–REQ-021)
 
-On read, the resource SHALL parse `id` to extract the concrete index name, call the Get Index API with `flat_settings=true`, and if the index is not found (HTTP 404 or missing from response), SHALL remove the resource from state without error. When the index is found, the resource SHALL populate `concrete_name`, all aliases, `mappings`, `settings_raw`, and all individual setting attributes from the API response. When state already contains a configured `name`, read SHALL preserve that configured value and SHALL NOT overwrite it with the concrete index name. When state does not contain `name`, read SHALL backfill `name` from the concrete index name.
+On read, the resource SHALL parse `id` to extract the concrete index name, call the Get Index API with `flat_settings=true`, and if the index is not found (HTTP 404 or missing from response), SHALL remove the resource from state without error. When the index is found, the resource SHALL populate `concrete_name`, all aliases, `mappings`, `settings_raw`, and all individual setting attributes from the API response. For `mappings`, read SHALL preserve the user's prior mapping intent when the API response is a semantically equal superset caused by mappings injected by a matching index template. When state already contains a configured `name`, read SHALL preserve that configured value and SHALL NOT overwrite it with the concrete index name. When state does not contain `name`, read SHALL backfill `name` from the concrete index name.
 
 #### Scenario: Index not found
 
-- GIVEN the Get Index API returns 404 or the concrete index name is absent from the response
-- WHEN read runs
-- THEN the resource SHALL be removed from state and no error diagnostic SHALL be added
+- **WHEN** the Get Index API returns 404
+- **THEN** the resource SHALL remove itself from state without error
 
-#### Scenario: Read preserves configured date math name
+#### Scenario: Date math name remains stable during read
 
 - **WHEN** state already contains a configured date math expression in `name` and read refreshes the managed concrete index
 - **THEN** `name` SHALL remain unchanged and `concrete_name` SHALL reflect the concrete index being managed
 
-### Requirement: Mappings plan modifier (REQ-022–REQ-024)
+#### Scenario: Template-only mappings stay non-drifting
 
-The `mappings` attribute SHALL use a custom plan modifier that preserves existing mapped fields not present in config, because Elasticsearch ignores field removal requests. When a field is removed from config `mappings.properties`, the plan modifier SHALL add a warning diagnostic and retain the field in the planned value. When a field's `type` changes between state and config, the plan modifier SHALL require replacement. When `mappings.properties` is removed entirely from config while present in state, the plan modifier SHALL require replacement.
+- **GIVEN** an index resource has no configured `mappings`
+- **AND** a matching index template injects mappings into the created index
+- **WHEN** read refreshes the index and Terraform plans the unchanged configuration
+- **THEN** Terraform SHALL produce an empty plan for the index resource
 
-For `semantic_text` fields, Elasticsearch automatically enriches the stored mapping with a `model_settings` object (containing inference model configuration such as `dimensions`, `element_type`, `service`, `similarity`, and `task_type`) after index creation. When the field type in state and config is `semantic_text` and `model_settings` is present in state but absent from the config, the plan modifier SHALL copy `model_settings` from state into the planned value so that the plan matches the value Elasticsearch will return. When `model_settings` is explicitly specified in config, the config value SHALL be used as-is and SHALL NOT be overwritten by the state value.
+#### Scenario: User-owned mappings tolerate template-injected extras
+
+- **GIVEN** an index resource has configured `mappings`
+- **AND** a matching index template injects additional mapping `properties`, `dynamic_templates`, or other top-level mapping keys
+- **WHEN** read refreshes the index after create or during a later plan
+- **THEN** Terraform SHALL NOT report a provider inconsistent-result error
+- **AND** Terraform SHALL produce an empty plan for the unchanged configuration
+
+### Requirement: Mappings plan modifier and semantic equality (REQ-022–REQ-024)
+
+The `mappings` attribute SHALL use shared mapping comparison semantics for both semantic equality and replacement decisions. The comparison SHALL preserve existing mapped fields not present in config when those fields are user-owned and Elasticsearch would retain them after a field removal request. When a user-owned field is removed from config `mappings.properties`, the provider SHALL add a warning diagnostic and retain the field in the planned value or otherwise treat the retained field as semantically equal state. When a user-owned field's `type` changes between state and config, the provider SHALL require replacement. When `mappings.properties` is removed entirely from config while user-owned properties are present in state, the provider SHALL require replacement.
+
+For mapping content injected by a matching index template, including additional `properties`, `dynamic_templates`, `_meta`, `runtime`, or other top-level mapping keys absent from user configuration, the resource SHALL treat the API value as a non-drifting superset of the user-owned mapping intent. The resource SHALL NOT require `lifecycle.ignore_changes = [mappings]` to avoid drift caused only by those template-injected mappings.
+
+For `semantic_text` fields, Elasticsearch automatically enriches the stored mapping with a `model_settings` object (containing inference model configuration such as `dimensions`, `element_type`, `service`, `similarity`, and `task_type`) after index creation. When the field type in state and config is `semantic_text` and `model_settings` is present in state but absent from the config, the provider SHALL treat the enriched mapping as semantically equal to the configured mapping so that the plan matches the value Elasticsearch will return. When `model_settings` is explicitly specified in config, the config value SHALL be used as-is and SHALL NOT be overwritten by the state value.
 
 #### Scenario: Field removed from config
 
-- GIVEN state `mappings` contains field `foo` and config `mappings` does not
+- GIVEN state `mappings` contains user-owned field `foo` and config `mappings` does not
 - WHEN plan runs
-- THEN the plan SHALL retain `foo` in the planned `mappings` and SHALL add a warning diagnostic
+- THEN the plan SHALL retain `foo` in the planned `mappings` or treat the retained state value as semantically equal
+- AND the provider SHALL add a warning diagnostic
 
 #### Scenario: Field type changed
 
-- GIVEN state `mappings` has field `foo` with `type: keyword` and config has `type: text`
+- GIVEN state `mappings` has user-owned field `foo` with `type: keyword` and config has `type: text`
 - WHEN plan runs
-- THEN the plan modifier SHALL mark the resource for replacement
+- THEN the provider SHALL mark the resource for replacement
 
 #### Scenario: semantic_text field without explicit model_settings in config
 
 - GIVEN state `mappings` contains a `semantic_text` field with server-enriched `model_settings`
 - AND the config for that field does not specify `model_settings`
 - WHEN plan runs
-- THEN the plan modifier SHALL copy `model_settings` from state into the planned value
+- THEN the provider SHALL treat the server-enriched `model_settings` as semantically equal to the configured field
 
 #### Scenario: semantic_text field with explicit model_settings in config
 
 - GIVEN state `mappings` contains a `semantic_text` field with `model_settings`
 - AND the config for that field also specifies `model_settings`
 - WHEN plan runs
-- THEN the plan modifier SHALL use the config `model_settings` value and SHALL NOT overwrite it with the state value
+- THEN the provider SHALL use the config `model_settings` value and SHALL NOT overwrite it with the state value
+
+#### Scenario: Template-injected dynamic templates are non-drift
+
+- **GIVEN** a matching index template injects `dynamic_templates`
+- **AND** the index resource configuration does not own those `dynamic_templates`
+- **WHEN** Terraform compares refreshed mappings with prior user intent
+- **THEN** the template-injected `dynamic_templates` SHALL be treated as non-drift
 
 ### Requirement: Settings mapping (REQ-025–REQ-027)
 
@@ -327,3 +372,185 @@ On every read, the resource SHALL serialize all index settings returned by the A
 - GIVEN a successful Get Index API response
 - WHEN the provider maps the response to state
 - THEN `settings_raw` SHALL contain the JSON-serialized settings object from the API response
+
+### Requirement: Opt-in adoption of existing indices via `use_existing`
+
+The set of static settings compared during `use_existing` adoption SHALL be extended to include `sort.missing` and `sort.mode`. When these settings are explicitly set in the plan, the adoption flow SHALL compare them against the existing index's static settings and SHALL return an error diagnostic when they differ, consistent with the behavior for `sort.field` and `sort.order`.
+
+#### Scenario: Adoption compares `sort.missing` against existing index
+
+- **GIVEN** `use_existing = true` and an existing index where `index.sort.missing` is `["_last"]`
+- **AND** the plan specifies `sort = [{ field = "date", missing = "_first" }]`
+- **WHEN** create runs
+- **THEN** the adoption flow SHALL return an error diagnostic naming the mismatched `sort.missing` value
+- **AND** SHALL NOT call any mutating API on the index
+
+### Requirement: Nested `sort` attribute for per-field sort configuration (REQ-SORT-01)
+
+The `elasticstack_elasticsearch_index` resource SHALL expose a new optional `sort` attribute as a `ListNestedAttribute`. Each element of the list SHALL represent one sort entry with the following nested attributes:
+
+- `field` (required, string): The index field to sort by. Must have `doc_values` enabled (e.g. boolean, numeric, date, keyword).
+- `order` (optional, string, allowed: `"asc"`, `"desc"`): The sort direction. Defaults to `"asc"` at the Elasticsearch level when not specified.
+- `missing` (optional, string, allowed: `"_last"`, `"_first"`): How to treat documents that are missing the sort field. Defaults to `"_last"` at the Elasticsearch level when not specified.
+- `mode` (optional, string, allowed: `"min"`, `"max"`): Which value to use when a sort field has multiple values. Defaults to `"min"` when order is `asc` and `"max"` when order is `desc` at the Elasticsearch level when not specified.
+
+The `sort` attribute maps to the Elasticsearch static settings `index.sort.field`, `index.sort.order`, `index.sort.missing`, and `index.sort.mode`. Because these are immutable static settings, any change to the configured `sort` list SHALL require resource replacement, subject to the migration suppression rules in REQ-SORT-03.
+
+The `sort` attribute and the deprecated `sort_field`/`sort_order` attributes SHALL be mutually exclusive. The schema SHALL enforce this with a `ConflictsWith` validator that produces a plan-time error when both `sort` and either `sort_field` or `sort_order` are set in the same configuration.
+
+#### Scenario: Index created with nested sort attribute
+
+- **GIVEN** a configuration with `sort = [{ field = "date", order = "desc", missing = "_last" }]`
+- **WHEN** the resource is created
+- **THEN** the Elasticsearch index SHALL be created with `index.sort.field = ["date"]`, `index.sort.order = ["desc"]`, and `index.sort.missing = ["_last"]`
+
+#### Scenario: Multi-field sort preserves order
+
+- **GIVEN** a configuration with `sort = [{ field = "date", order = "desc" }, { field = "username", order = "asc" }]`
+- **WHEN** the resource is created
+- **THEN** the Elasticsearch index SHALL be created with `index.sort.field = ["date", "username"]` and `index.sort.order = ["desc", "asc"]` in that order
+
+#### Scenario: Mixing `sort` and `sort_field` is rejected at plan time
+
+- **GIVEN** a configuration that sets both `sort` and `sort_field`
+- **WHEN** Terraform validates the configuration
+- **THEN** validation SHALL fail with a diagnostic before any API call is made
+
+#### Scenario: Changing `sort` requires replace
+
+- **GIVEN** an existing index managed with the `sort` attribute
+- **WHEN** a configuration change modifies any entry in `sort` (e.g. changes `order`)
+- **THEN** Terraform SHALL plan to destroy and recreate the resource
+
+---
+
+### Requirement: Deprecate `sort_field` and `sort_order` attributes (REQ-SORT-02)
+
+The existing `sort_field` and `sort_order` attributes SHALL remain in the schema as deprecated optional attributes, still functioning as before. Both SHALL carry a `DeprecationMessage` directing users to use the `sort` attribute instead. Both SHALL carry `ConflictsWith` validators that produce a plan-time error when used alongside the new `sort` attribute.
+
+#### Scenario: Deprecated attributes still work after provider upgrade
+
+- **GIVEN** an existing configuration that uses `sort_field` and `sort_order`
+- **WHEN** the provider is upgraded to the version containing this change
+- **THEN** Terraform SHALL plan no changes and the resource SHALL remain under management without requiring migration
+
+#### Scenario: Deprecation warning is surfaced
+
+- **GIVEN** a configuration that uses `sort_field` or `sort_order`
+- **WHEN** Terraform plans or applies
+- **THEN** Terraform SHALL surface a deprecation warning for the attribute
+
+---
+
+### Requirement: Private-state-backed migration path from legacy to new `sort` attribute (REQ-SORT-03)
+
+The resource SHALL store the ordered sort configuration from Elasticsearch in private state during every `Read` operation. This ordered sort configuration SHALL be stored under a private state key `"sort_config"` as a JSON-marshaled object containing ordered arrays for `fields`, `orders`, and optional per-position `missing`/`mode` values (as reported by Elasticsearch static settings).
+
+When Terraform plans a configuration that:
+1. Has `sort` as null in state (the resource was created using the deprecated attributes),
+2. Has a non-null `sort` in the plan (the user is migrating to the new attribute),
+3. And private state contains the ordered sort config from Elasticsearch,
+
+the plan modifier on `sort` SHALL compare the plan's `sort[*].field` and `sort[*].order` (treating null `order` as `"asc"`) against the private state. The modifier SHALL also compare `sort[*].missing` and `sort[*].mode` using semantic normalization against existing index settings:
+
+- Treat explicit defaults as equivalent to absent settings in both plan and Elasticsearch (`missing`: `"_last"`; `mode`: `"min"` when order is `asc`, `"max"` when order is `desc`).
+- Compare values per position after order normalization.
+
+When fields and orders match exactly (in order), and all planned `missing`/`mode` values are semantically equivalent to the existing index settings, the modifier SHALL suppress replace so users can migrate representations without destroying the index.
+
+If any planned `sort[*].missing` or `sort[*].mode` value is not semantically equivalent to the existing index setting at the same position, replace SHALL be required.
+
+If private state is absent (first `terraform apply` after provider upgrade before a `Read` has populated it), the modifier SHALL default to requiring replace. Users can avoid this by running `terraform refresh` before `terraform apply` after upgrading.
+
+The deprecated `sort_field` and `sort_order` plan modifiers SHALL suppress replace for those attributes when `sort` is non-null in the plan (the new attribute's plan modifier owns the replace decision in that case).
+
+#### Scenario: Migrating from legacy to new sort attribute does not replace the index
+
+- **GIVEN** an existing index managed with `sort_field = ["date"]` and `sort_order = ["desc"]`
+- **AND** the resource has been read at least once (private state is populated)
+- **WHEN** the configuration is changed to `sort = [{ field = "date", order = "desc" }]`
+- **THEN** Terraform SHALL NOT plan a destroy+recreate
+- **AND** Terraform SHALL plan an in-place update (or no-change if no other attributes differ)
+
+#### Scenario: Explicit default `missing`/`mode` values during migration do not require replace
+
+- **GIVEN** an existing index managed with `sort_field = ["date"]` and `sort_order = ["desc"]`
+- **AND** the existing index has no explicit `index.sort.missing` or `index.sort.mode` settings (Elasticsearch defaults apply)
+- **WHEN** the configuration is changed to `sort = [{ field = "date", order = "desc", missing = "_last", mode = "max" }]`
+- **THEN** Terraform SHALL NOT plan a destroy+recreate
+
+#### Scenario: Non-equivalent `missing` or `mode` during migration requires replace
+
+- **GIVEN** an existing index managed with `sort_field = ["date"]` and `sort_order = ["desc"]`
+- **WHEN** the configuration is changed to `sort = [{ field = "date", order = "desc", missing = "_first" }]`
+- **THEN** Terraform SHALL plan to destroy and recreate the resource
+
+#### Scenario: First apply after upgrade forces replace when private state is absent
+
+- **GIVEN** an existing index managed with `sort_field`/`sort_order` and no prior read since the provider was upgraded
+- **WHEN** the configuration is changed to use `sort`
+- **THEN** Terraform SHALL plan to destroy and recreate the resource (private state is not yet populated)
+
+---
+
+### Requirement: `sort.missing` and `sort.mode` in static settings and adoption (REQ-SORT-04)
+
+The `sort.missing` and `sort.mode` Elasticsearch settings keys SHALL be added to `staticSettingsKeys`. The `use_existing` index adoption flow SHALL compare these settings against the existing index's static settings when they are explicitly set in the plan.
+
+When the plan originates from the new `sort` `ListNestedAttribute`, the `compareStaticPlanAndES` function in `use_existing.go` SHALL compare `sort.field`, `sort.order`, `sort.missing`, and `sort.mode` as ordered string slices (using `stringSliceOrderedFromAny`). This preserves the order-significant semantics of the nested `sort` list defined in REQ-SORT-01.
+
+When the plan originates from the deprecated `sort_field`/`sort_order` attributes, the `compareStaticPlanAndES` function in `use_existing.go` SHALL preserve the existing legacy behavior for `sort.field`: compare `sort.field` as an unordered set, while continuing to compare ordered per-position settings only where the plan shape preserves positional meaning.
+
+#### Scenario: Adoption fails when nested `sort.field` order differs
+
+- **GIVEN** `use_existing = true` and an existing index with `index.sort.field = ["date", "id"]`
+- **AND** the plan specifies `sort = [{ field = "id" }, { field = "date" }]`
+- **WHEN** the resource is created
+- **THEN** the adoption flow SHALL return an error diagnostic naming the mismatched `sort.field` setting
+- **AND** SHALL NOT call any mutating API
+
+#### Scenario: Adoption preserves legacy unordered comparison for `sort_field`
+
+- **GIVEN** `use_existing = true` and an existing index with `index.sort.field = ["date", "id"]`
+- **AND** the plan specifies `sort_field = ["id", "date"]`
+- **WHEN** the resource is created
+- **THEN** the adoption flow SHALL allow adoption without a `sort.field` mismatch based only on element order
+
+#### Scenario: Adoption fails when `sort.missing` differs
+
+- **GIVEN** `use_existing = true` and an existing index with `index.sort.missing = ["_last"]`
+- **AND** the plan specifies `sort = [{ field = "date", missing = "_first" }]`
+- **WHEN** the resource is created
+- **THEN** the adoption flow SHALL return an error diagnostic naming the mismatched `sort.missing` setting
+- **AND** SHALL NOT call any mutating API
+
+---
+
+### Requirement: Schema — sort attribute and deprecated sort_field/sort_order (REQ-SORT-05)
+
+The `sort_field` and `sort_order` attributes SHALL remain in the schema as optional attributes but SHALL carry a `DeprecationMessage` directing users to the new `sort` attribute. The schema SHALL additionally expose the `sort` attribute as a `ListNestedAttribute` with nested `field` (required string), `order` (optional string), `missing` (optional string), and `mode` (optional string) attributes. The `sort` attribute and `sort_field`/`sort_order` SHALL be mutually exclusive; the schema SHALL enforce this with `ConflictsWith` validators.
+
+```hcl
+resource "elasticstack_elasticsearch_index" "example" {
+  # Static settings (force new on change)
+  sort_field = <optional, set(string), DEPRECATED — use sort>  # force new
+  sort_order = <optional, list(string), DEPRECATED — use sort> # force new
+
+  # Replaces sort_field and sort_order
+  sort = <optional, list(object)> {   # force new (with migration suppression — see REQ-SORT-03)
+    field   = <required, string>
+    order   = <optional, string>  # allowed: "asc", "desc"
+    missing = <optional, string>  # allowed: "_last", "_first"
+    mode    = <optional, string>  # allowed: "min", "max"
+  }
+}
+```
+
+#### Scenario: Deprecated attributes emit deprecation warnings
+
+- **GIVEN** a Terraform configuration that uses `sort_field` or `sort_order`
+- **WHEN** Terraform validates or applies the configuration
+- **THEN** a deprecation warning SHALL be surfaced for each deprecated attribute
+
+---
+

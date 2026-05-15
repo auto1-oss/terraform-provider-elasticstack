@@ -53,7 +53,7 @@ func (r *resourceAgentConfiguration) Read(ctx context.Context, req resource.Read
 func (r *resourceAgentConfiguration) read(ctx context.Context, state *AgentConfiguration) (*AgentConfiguration, diag.Diagnostics) {
 	var diags diag.Diagnostics
 
-	scoped, kDiags := r.client.GetKibanaClient(ctx, state.KibanaConnection)
+	scoped, kDiags := r.Client().GetKibanaClient(ctx, state.KibanaConnection)
 	diags.Append(kDiags...)
 	if diags.HasError() {
 		return nil, diags
@@ -81,14 +81,15 @@ func (r *resourceAgentConfiguration) read(ctx context.Context, state *AgentConfi
 		return nil, diags
 	}
 
-	if apiResp.JSON200 == nil {
-		diags.AddError("Failed to get APM agent configurations from body", "Expected 200 response body to not be nil")
+	configs, unwrapDiags := diagutil.UnwrapJSON200(apiResp.JSON200, "APM agent configurations")
+	diags.Append(unwrapDiags...)
+	if diags.HasError() {
 		return nil, diags
 	}
 
 	idFromState := state.ID.ValueString()
 	var foundConfig *kbapi.APMUIAgentConfigurationObject
-	for _, config := range *apiResp.JSON200.Configurations {
+	for _, config := range *configs.Configurations {
 		if config.Service.Name == nil {
 			continue
 		}

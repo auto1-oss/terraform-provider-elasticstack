@@ -52,9 +52,7 @@ data "elasticstack_elasticsearch_enrich_policy" "example" {
   }
 }
 ```
-
 ## Requirements
-
 ### Requirement: Enrich policy APIs (REQ-001–REQ-003)
 
 The resource SHALL use the Put enrich policy API to create policies, the Get enrich policy API to read policies, and the Delete enrich policy API to delete policies ([docs](https://www.elastic.co/guide/en/elasticsearch/reference/current/enrich-apis.html)). Non-success API responses (other than 404 on read) SHALL be surfaced as Terraform diagnostics.
@@ -151,7 +149,18 @@ By default, the resource SHALL use the provider-level Elasticsearch client. When
 
 ### Requirement: Query mapping (REQ-013–REQ-015)
 
-When `query` is set in configuration, the resource SHALL send it as a parsed JSON object in the `query` field of the Put request body. When `query` is null or not configured, the resource SHALL omit the `query` field from the Put request body entirely. On read, when the API response includes a `query` field that is non-null and non-empty, the resource SHALL store it in state as a normalized JSON string; otherwise `query` SHALL be stored as null.
+When `query` is set in configuration, the resource SHALL send it as a parsed JSON object
+in the `query` field of the Put request body. When `query` is null or not configured, the
+resource SHALL omit the `query` field from the Put request body entirely. On read, when
+the API response includes a `query` field that is non-null and non-empty **and whose
+JSON-marshaled form is not the literal bytes `null`**, the resource SHALL store it in
+state as a normalized JSON string; otherwise `query` SHALL be stored as null.
+
+Specifically, when `json.Marshal` applied to the `*types.Query` value returned by the
+go-elasticsearch typed client produces the bytes `null` (which occurs when the client
+deserializes an explicit `"query": null` in the API response into a non-nil pointer to a
+zero-value struct), the provider SHALL treat this identically to an absent `query` field
+and SHALL store `null` in Terraform state.
 
 #### Scenario: Query sent as JSON object
 
@@ -170,6 +179,19 @@ When `query` is set in configuration, the resource SHALL send it as a parsed JSO
 - GIVEN the API response has no `query` field or a null query
 - WHEN read runs
 - THEN `query` in state SHALL be null
+
+#### Scenario: Marshaled-null query treated as absent
+
+- GIVEN the API response contains `"query": null` (explicit JSON null)
+- AND the go-elasticsearch typed client returns a non-nil `*types.Query` for this value
+- WHEN `json.Marshal` applied to that `*types.Query` produces the bytes `null`
+- THEN the provider SHALL store `query` as null in Terraform state (not the string `"null"`)
+
+#### Scenario: No-query policy is idempotent across applies
+
+- GIVEN an enrich policy was created with `query` omitted from configuration
+- WHEN `terraform apply` is run a second time with the same configuration
+- THEN Terraform SHALL plan no changes (no replacement, no update)
 
 ### Requirement: Policy type mapping (REQ-016)
 
@@ -226,3 +248,32 @@ By default, the data source SHALL use the provider-level Elasticsearch client. W
 - GIVEN `elasticsearch_connection` is configured on the data source
 - WHEN the data source reads
 - THEN the resource-scoped client SHALL be used instead of the provider client
+
+### Requirement: Import state (REQ-023)
+
+The resource SHALL implement `resource.ResourceWithImportState`. The import ID SHALL be the full resource `id` in the format `<cluster_uuid>/<policy_name>`. On import, the resource SHALL set `id` to the provided import ID and SHALL set `execute` to `true` in state (the computed default), so that a subsequent `terraform plan` shows no diff when `execute` is not explicitly configured.
+
+#### Scenario: Import with valid id sets state
+
+- **GIVEN** a valid import ID of the form `<cluster_uuid>/<policy_name>`
+- **WHEN** `terraform import` runs
+- **THEN** `id` in state SHALL equal the provided import ID
+- **AND** `execute` in state SHALL be `true`
+- **AND** all other resource attributes SHALL be populated from the API by the subsequent Read call
+
+#### Scenario: Import followed by plan shows no diff
+
+- **GIVEN** a resource was successfully imported with no `execute` configured
+- **WHEN** `terraform plan` runs after the import
+- **THEN** no attribute differences SHALL be shown and no replacement SHALL be planned
+
+### Requirement: Import acceptance test (REQ-024)
+
+The resource acceptance test suite SHALL include an import step that verifies round-trip import integrity: after importing an existing policy, `terraform plan` SHALL show no diff and all policy attributes SHALL match the pre-import configuration.
+
+#### Scenario: Acceptance test import step
+
+- **GIVEN** an existing enrich policy created in a prior acceptance test step
+- **WHEN** an `ImportState: true, ImportStateVerify: true` step runs with the resource's composite ID
+- **THEN** all attributes in the imported state SHALL match the originally configured attributes
+

@@ -9,46 +9,63 @@ on:
   steps:
     - name: Compute issue slots
       id: compute_issue_slots
-      uses: actions/github-script@v8
+      uses: actions/github-script@v9
+      env:
+        ISSUE_SLOTS_LABEL: schema-coverage
+        ISSUE_SLOTS_CAP: "3"
       with:
         github-token: ${{ secrets.GITHUB_TOKEN }}
         script: |
-          const SCHEMA_COVERAGE_LABEL = 'schema-coverage';
-          const ISSUE_CAP = 3;
-          
           /**
-           * Computes schema-coverage issue slot availability.
-           * @param {number} openIssueCount - The number of currently open schema-coverage issues.
-           * @returns {{ open_schema_coverage_issues: number, issue_slots_available: number, gate_reason: string }}
+           * Computes issue slot availability for a labeled issue bucket.
+           * @param {{ label: string, issueCap: number | string, openIssueCount: number }} params
+           * @returns {{ open_issues: number, issue_slots_available: number, gate_reason: string }}
            */
-          function computeIssueSlots(openIssueCount) {
-            const slotsAvailable = Math.max(0, ISSUE_CAP - openIssueCount);
+          function computeIssueSlots({ label, issueCap, openIssueCount }) {
+            const normalizedLabel = String(label).trim();
+            const cap = Number(issueCap);
+          
+            if (!normalizedLabel) {
+              throw new Error('issue slot label must be a non-empty string');
+            }
+          
+            if (!Number.isInteger(cap) || cap < 0) {
+              throw new Error(`issue cap must be a non-negative integer, got: ${issueCap}`);
+            }
+          
+            if (!Number.isInteger(openIssueCount) || openIssueCount < 0) {
+              throw new Error(`open issue count must be a non-negative integer, got: ${openIssueCount}`);
+            }
+          
+            const slotsAvailable = Math.max(0, cap - openIssueCount);
           
             let gateReason;
             if (slotsAvailable === 0) {
-              gateReason = `Issue cap reached: ${openIssueCount} open schema-coverage issue(s), cap is ${ISSUE_CAP}. Agent job will be skipped.`;
+              gateReason = `Issue cap reached: ${openIssueCount} open ${normalizedLabel} issue(s), cap is ${cap}. Agent job will be skipped.`;
             } else {
-              gateReason = `${slotsAvailable} slot(s) available: ${openIssueCount} open schema-coverage issue(s), cap is ${ISSUE_CAP}.`;
+              gateReason = `${slotsAvailable} slot(s) available: ${openIssueCount} open ${normalizedLabel} issue(s), cap is ${cap}.`;
             }
           
             return {
-              open_schema_coverage_issues: openIssueCount,
+              open_issues: openIssueCount,
               issue_slots_available: slotsAvailable,
               gate_reason: gateReason,
             };
           }
           
           if (typeof module !== 'undefined') {
-            module.exports = { SCHEMA_COVERAGE_LABEL, ISSUE_CAP, computeIssueSlots };
+            module.exports = { computeIssueSlots };
           }
           
+          const ISSUE_LABEL = process.env.ISSUE_SLOTS_LABEL;
+          const ISSUE_CAP = process.env.ISSUE_SLOTS_CAP;
           const { owner, repo } = context.repo;
           
-          // Count open schema-coverage issues, excluding pull requests
+          // Count open issues for this workflow label, excluding pull requests
           const issues = await github.paginate(github.rest.issues.listForRepo, {
             owner,
             repo,
-            labels: SCHEMA_COVERAGE_LABEL,
+            labels: ISSUE_LABEL,
             state: 'open',
             per_page: 100,
           });
@@ -56,9 +73,13 @@ on:
           // GitHub issues API may return pull requests — exclude them
           const openIssueCount = issues.filter(item => !item.pull_request).length;
           
-          const result = computeIssueSlots(openIssueCount);
+          const result = computeIssueSlots({
+            label: ISSUE_LABEL,
+            issueCap: ISSUE_CAP,
+            openIssueCount,
+          });
           
-          core.setOutput('open_schema_coverage_issues', String(result.open_schema_coverage_issues));
+          core.setOutput('open_issues', String(result.open_issues));
           core.setOutput('issue_slots_available', String(result.issue_slots_available));
           core.setOutput('gate_reason', result.gate_reason);
           
@@ -66,7 +87,10 @@ on:
           
 engine:
   id: claude
-  model: "llm-gateway/gpt-5.4"
+  model: "llm-gateway/claude-sonnet-4-6"
+  args:
+    - "--effort"
+    - "high"
   env:
     ANTHROPIC_BASE_URL: "https://elastic.litellm-prod.ai/"
     ANTHROPIC_API_KEY: ${{ secrets.CLAUDE_LITELLM_PROXY_API_KEY }}
@@ -88,14 +112,37 @@ safe-outputs:
     title-prefix: "[schema-coverage] "
     labels: [testing, acceptance-tests, schema-coverage]
     max: 3
-  assign-to-agent:
-    name: copilot
-    model: "gpt-5.4"
-    custom-agent: acceptance-test-improver
-    allowed: [copilot]
-    target: "*"
-    max: 3
-    github-token: ${{ secrets.GH_AW_AGENT_TOKEN }}
+  jobs:
+    dispatch-code-factory:
+      needs: safe_outputs
+      description: "Dispatch code-factory for each created issue"
+      permissions:
+        actions: write
+        contents: read
+      runs-on: ubuntu-latest
+      steps:
+        - name: Checkout repository
+          uses: actions/checkout@v6
+          with:
+            persist-credentials: false
+            sparse-checkout: .github/workflows-src/lib
+            sparse-checkout-cone-mode: true
+            fetch-depth: 1
+        - name: Download safe-outputs artifact
+          uses: actions/download-artifact@v8
+          with:
+            name: safe-outputs-items
+            path: /tmp/gh-aw/safe-outputs
+            if-no-files-found: warn
+        - name: Dispatch code-factory runs
+          env:
+            GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+            GITHUB_REPOSITORY: ${{ github.repository }}
+            SOURCE_WORKFLOW: schema-coverage-rotation
+          run: |
+            node .github/workflows-src/lib/producer-dispatch.js \
+              /tmp/gh-aw/safe-outputs/temporary-id-map.json \
+              "$SOURCE_WORKFLOW"
 network:
   allowed: [defaults, node, go, elastic.litellm-prod.ai]
 if: >-
@@ -120,7 +167,7 @@ steps:
 jobs:
   pre-activation:
     outputs:
-      open_schema_coverage_issues: ${{ steps.compute_issue_slots.outputs.open_schema_coverage_issues }}
+      open_issues: ${{ steps.compute_issue_slots.outputs.open_issues }}
       issue_slots_available: ${{ steps.compute_issue_slots.outputs.issue_slots_available }}
       gate_reason: ${{ steps.compute_issue_slots.outputs.gate_reason }}
 ---
@@ -133,7 +180,7 @@ You are responsible for running schema-coverage analysis on up to `${{ needs.pre
 
 A deterministic pre-activation step has already computed schema-coverage issue capacity for this run. Do **not** query GitHub issue counts yourself; use only the values below.
 
-- **Open schema-coverage issues**: `${{ needs.pre_activation.outputs.open_schema_coverage_issues }}`
+- **Open schema-coverage issues**: `${{ needs.pre_activation.outputs.open_issues }}`
 - **Issue slots available**: `${{ needs.pre_activation.outputs.issue_slots_available }}`
 - **Gate reason**: ${{ needs.pre_activation.outputs.gate_reason }}
 
@@ -187,13 +234,9 @@ Issue content must include:
 - Prioritized top 5 gaps (or fewer if less exist).
 - Concrete acceptance-test additions that would close those gaps.
 
-Do NOT include instructions in the issue body that override the acceptance-test-improver agent's behavior (for example, do not tell it to skip tests, skip builds, or change its workflow).
-
-For each issue created, you MUST call `assign-to-agent` with:
-- `name: copilot`
-- `custom_agent: acceptance-test-improver`
-- the temporary ID returned by the `create-issue` safe output
-
 If an analyzed entity has no actionable gaps, do not create an issue for it.
 
 If at least one entity was analyzed but none has actionable gaps, you MUST call `noop` with a short reason.
+
+## Dispatch
+After creating all issues for this run (or if no issues were created), call the `dispatch_code_factory` safe output tool once to dispatch the `code-factory` workflow for each created issue.

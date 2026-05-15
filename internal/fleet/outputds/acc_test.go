@@ -20,7 +20,9 @@ package outputds_test
 import (
 	"fmt"
 	"maps"
+	"os"
 	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/elastic/terraform-provider-elasticstack/internal/acctest"
@@ -35,19 +37,24 @@ import (
 var minVersionOutput = version.Must(version.NewVersion("8.6.0"))
 
 func TestAccDataSourceOutputDefault(t *testing.T) {
+	versionutils.SkipIfUnsupported(t, minVersionOutput, versionutils.FlavorAny)
+
 	resource.Test(t, resource.TestCase{
 		PreCheck: func() { acctest.PreCheck(t) },
 		Steps: []resource.TestStep{
 			{
-				SkipFunc:                 versionutils.CheckIfVersionIsUnsupported(minVersionOutput),
 				ProtoV6ProviderFactories: acctest.Providers,
 				ConfigDirectory:          acctest.NamedTestCaseDirectory("data"),
 				Check: resource.ComposeTestCheckFunc(
 					resource.TestCheckResourceAttr("data.elasticstack_fleet_output.test", "id", "outputs"),
+					resource.TestCheckNoResourceAttr("data.elasticstack_fleet_output.test", "space_id"),
 					testCheckResourceOutputsMinCount("data.elasticstack_fleet_output.test", 1),
 					testCheckResourceHasOutput("data.elasticstack_fleet_output.test", map[string]string{
-						"id":   "fleet-default-output",
-						"name": "default",
+						"id":                   "fleet-default-output",
+						"name":                 "default",
+						"type":                 "elasticsearch",
+						"default_integrations": "true",
+						"default_monitoring":   "true",
 					}),
 				),
 			},
@@ -56,13 +63,14 @@ func TestAccDataSourceOutputDefault(t *testing.T) {
 }
 
 func TestAccDataSourceOutputCustomSpace(t *testing.T) {
+	versionutils.SkipIfUnsupported(t, minVersionOutput, versionutils.FlavorAny)
+
 	spaceName := "test-" + sdkacctest.RandStringFromCharSet(8, sdkacctest.CharSetAlphaNum)
 
 	resource.Test(t, resource.TestCase{
 		PreCheck: func() { acctest.PreCheck(t) },
 		Steps: []resource.TestStep{
 			{
-				SkipFunc:                 versionutils.CheckIfVersionIsUnsupported(minVersionOutput),
 				ProtoV6ProviderFactories: acctest.Providers,
 				ConfigDirectory:          acctest.NamedTestCaseDirectory("create"),
 				ConfigVariables: config.Variables{
@@ -74,7 +82,6 @@ func TestAccDataSourceOutputCustomSpace(t *testing.T) {
 				),
 			},
 			{
-				SkipFunc:                 versionutils.CheckIfVersionIsUnsupported(minVersionOutput),
 				ProtoV6ProviderFactories: acctest.Providers,
 				ConfigDirectory:          acctest.NamedTestCaseDirectory("data"),
 				ConfigVariables: config.Variables{
@@ -84,13 +91,19 @@ func TestAccDataSourceOutputCustomSpace(t *testing.T) {
 					resource.TestCheckResourceAttr("elasticstack_kibana_space.test", "name", spaceName),
 					resource.TestCheckResourceAttr("elasticstack_fleet_output.test", "name", "test"),
 					resource.TestCheckResourceAttr("data.elasticstack_fleet_output.test", "id", "outputs"),
+					resource.TestCheckResourceAttr("data.elasticstack_fleet_output.test", "space_id", "space"),
 					testCheckResourceOutputsMinCount("data.elasticstack_fleet_output.test", 2),
 					testCheckResourceHasOutput("data.elasticstack_fleet_output.test", map[string]string{
 						"id":   "fleet-default-output",
 						"name": "default",
 					}),
 					testCheckResourceHasOutputAttrPair("data.elasticstack_fleet_output.test", "elasticstack_fleet_output.test", "id", map[string]string{
-						"name": "test",
+						"name":                 "test",
+						"type":                 "elasticsearch",
+						"hosts.#":              "1",
+						"hosts.0":              "https://elasticsearch:9200",
+						"default_integrations": "false",
+						"default_monitoring":   "false",
 					}),
 				),
 			},
@@ -99,15 +112,17 @@ func TestAccDataSourceOutputCustomSpace(t *testing.T) {
 }
 
 func TestAccDataSourceOutputMissingSpace(t *testing.T) {
+	versionutils.SkipIfUnsupported(t, minVersionOutput, versionutils.FlavorAny)
+
 	resource.Test(t, resource.TestCase{
 		PreCheck: func() { acctest.PreCheck(t) },
 		Steps: []resource.TestStep{
 			{
-				SkipFunc:                 versionutils.CheckIfVersionIsUnsupported(minVersionOutput),
 				ProtoV6ProviderFactories: acctest.Providers,
 				ConfigDirectory:          acctest.NamedTestCaseDirectory("data"),
 				Check: resource.ComposeTestCheckFunc(
 					resource.TestCheckResourceAttr("data.elasticstack_fleet_output.test", "id", "outputs"),
+					resource.TestCheckResourceAttr("data.elasticstack_fleet_output.test", "space_id", "missing"),
 					testCheckResourceOutputsMinCount("data.elasticstack_fleet_output.test", 1),
 					testCheckResourceHasOutput("data.elasticstack_fleet_output.test", map[string]string{
 						"id":   "fleet-default-output",
@@ -119,6 +134,35 @@ func TestAccDataSourceOutputMissingSpace(t *testing.T) {
 	})
 }
 
+func TestAccDataSourceOutputKibanaConnection(t *testing.T) {
+	versionutils.SkipIfUnsupported(t, minVersionOutput, versionutils.FlavorAny)
+
+	resource.Test(t, resource.TestCase{
+		PreCheck: func() {
+			acctest.PreCheck(t)
+			acctest.PreCheckWithExplicitKibanaEndpoint(t)
+		},
+		Steps: []resource.TestStep{
+			{
+				ProtoV6ProviderFactories: acctest.Providers,
+				ConfigDirectory:          acctest.NamedTestCaseDirectory("data"),
+				ConfigVariables:          acctest.KibanaConnectionVariables(),
+				Check: resource.ComposeTestCheckFunc(
+					append([]resource.TestCheckFunc{
+						resource.TestCheckResourceAttr("data.elasticstack_fleet_output.test", "id", "outputs"),
+						testCheckResourceOutputsMinCount("data.elasticstack_fleet_output.test", 1),
+						resource.TestCheckResourceAttr("data.elasticstack_fleet_output.test", "kibana_connection.#", "1"),
+						resource.TestCheckResourceAttr("data.elasticstack_fleet_output.test", "kibana_connection.0.endpoints.#", "1"),
+						resource.TestCheckResourceAttr("data.elasticstack_fleet_output.test", "kibana_connection.0.endpoints.0", strings.TrimSpace(os.Getenv("KIBANA_ENDPOINT"))),
+						resource.TestCheckResourceAttr("data.elasticstack_fleet_output.test", "kibana_connection.0.insecure", "false"),
+					}, acctest.KibanaConnectionAuthChecks("data.elasticstack_fleet_output.test")...)...,
+				),
+			},
+		},
+	})
+}
+
+//nolint:unparam // resourceName is always the same in tests but kept for API consistency with other helpers
 func testCheckResourceOutputsMinCount(resourceName string, minCount int) resource.TestCheckFunc {
 	return func(state *terraform.State) error {
 		rs, ok := state.RootModule().Resources[resourceName]

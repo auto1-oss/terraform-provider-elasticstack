@@ -19,6 +19,8 @@ package agentbuilderagent_test
 
 import (
 	"fmt"
+	"os"
+	"strings"
 	"testing"
 
 	"github.com/elastic/terraform-provider-elasticstack/internal/acctest"
@@ -41,6 +43,8 @@ var (
 )
 
 func TestAccResourceAgentBuilderAgent(t *testing.T) {
+	versionutils.SkipIfUnsupported(t, minKibanaAgentBuilderAPIVersion, versionutils.FlavorAny)
+
 	agentID := "test-agent-" + uuid.New().String()[:8]
 	resourceID := testResourceID
 
@@ -48,7 +52,6 @@ func TestAccResourceAgentBuilderAgent(t *testing.T) {
 		PreCheck: func() { acctest.PreCheckWithWorkflowsEnabled(t, minKibanaAgentBuilderAPIVersion) },
 		Steps: []resource.TestStep{
 			{
-				SkipFunc:                 versionutils.CheckIfVersionIsUnsupported(minKibanaAgentBuilderAPIVersion),
 				ProtoV6ProviderFactories: acctest.Providers,
 				ConfigDirectory:          acctest.NamedTestCaseDirectory("create"),
 				ConfigVariables: config.Variables{
@@ -56,7 +59,7 @@ func TestAccResourceAgentBuilderAgent(t *testing.T) {
 				},
 				Check: resource.ComposeAggregateTestCheckFunc(
 					resource.TestCheckResourceAttr(resourceID, "agent_id", agentID),
-					resource.TestCheckResourceAttrSet(resourceID, "id"),
+					resource.TestCheckResourceAttr(resourceID, "id", "default/"+agentID),
 					resource.TestCheckResourceAttr(resourceID, "name", "Test Agent"),
 					resource.TestCheckResourceAttr(resourceID, "description", "A test agent for acceptance testing"),
 					resource.TestCheckResourceAttr(resourceID, "labels.#", "2"),
@@ -64,11 +67,10 @@ func TestAccResourceAgentBuilderAgent(t *testing.T) {
 					resource.TestCheckTypeSetElemAttr(resourceID, "labels.*", "agent"),
 					resource.TestCheckResourceAttr(resourceID, "tools.#", "1"),
 					resource.TestCheckTypeSetElemAttr(resourceID, "tools.*", "platform.core.index_explorer"),
-					resource.TestCheckResourceAttrSet(resourceID, "instructions"),
+					resource.TestCheckResourceAttr(resourceID, "instructions", "You are a helpful assistant that searches logs. Use the available tools to help answer questions."),
 				),
 			},
 			{
-				SkipFunc:                 versionutils.CheckIfVersionIsUnsupported(minKibanaAgentBuilderAPIVersion),
 				ProtoV6ProviderFactories: acctest.Providers,
 				ConfigDirectory:          acctest.NamedTestCaseDirectory("create"),
 				ConfigVariables: config.Variables{
@@ -82,7 +84,6 @@ func TestAccResourceAgentBuilderAgent(t *testing.T) {
 				ImportStateVerify: true,
 			},
 			{
-				SkipFunc:                 versionutils.CheckIfVersionIsUnsupported(minKibanaAgentBuilderAPIVersion),
 				ProtoV6ProviderFactories: acctest.Providers,
 				ConfigDirectory:          acctest.NamedTestCaseDirectory("update"),
 				ConfigVariables: config.Variables{
@@ -90,11 +91,12 @@ func TestAccResourceAgentBuilderAgent(t *testing.T) {
 				},
 				Check: resource.ComposeAggregateTestCheckFunc(
 					resource.TestCheckResourceAttr(resourceID, "agent_id", agentID),
-					resource.TestCheckResourceAttrSet(resourceID, "id"),
+					resource.TestCheckResourceAttr(resourceID, "id", "default/"+agentID),
 					resource.TestCheckResourceAttr(resourceID, "name", "Updated Test Agent"),
 					resource.TestCheckResourceAttr(resourceID, "description", "An updated test agent"),
 					resource.TestCheckResourceAttr(resourceID, "labels.#", "3"),
 					resource.TestCheckResourceAttr(resourceID, "tools.#", "2"),
+					resource.TestCheckResourceAttr(resourceID, "instructions", "You are an updated helpful assistant. Use the available tools wisely."),
 				),
 			},
 		},
@@ -102,6 +104,8 @@ func TestAccResourceAgentBuilderAgent(t *testing.T) {
 }
 
 func TestAccResourceAgentBuilderAgentSpace(t *testing.T) {
+	versionutils.SkipIfUnsupported(t, minKibanaAgentBuilderAPIVersion, versionutils.FlavorAny)
+
 	agentID := "test-agent-space-" + uuid.New().String()[:8]
 	spaceID := fmt.Sprintf("test-space-%s", uuid.New().String()[:8])
 	resourceID := testResourceID
@@ -110,7 +114,6 @@ func TestAccResourceAgentBuilderAgentSpace(t *testing.T) {
 		PreCheck: func() { acctest.PreCheckWithWorkflowsEnabled(t, minKibanaAgentBuilderAPIVersion) },
 		Steps: []resource.TestStep{
 			{
-				SkipFunc:                 versionutils.CheckIfVersionIsUnsupported(minKibanaAgentBuilderAPIVersion),
 				ProtoV6ProviderFactories: acctest.Providers,
 				ConfigDirectory:          acctest.NamedTestCaseDirectory("create"),
 				ConfigVariables: config.Variables{
@@ -125,7 +128,6 @@ func TestAccResourceAgentBuilderAgentSpace(t *testing.T) {
 				),
 			},
 			{
-				SkipFunc:                 versionutils.CheckIfVersionIsUnsupported(minKibanaAgentBuilderAPIVersion),
 				ProtoV6ProviderFactories: acctest.Providers,
 				ConfigDirectory:          acctest.NamedTestCaseDirectory("create"),
 				ConfigVariables: config.Variables{
@@ -144,22 +146,51 @@ func TestAccResourceAgentBuilderAgentSpace(t *testing.T) {
 }
 
 func TestAccDataSourceKibanaAgentBuilderAgent(t *testing.T) {
+	versionutils.SkipIfUnsupported(t, minKibanaAgentBuilderAPIVersion, versionutils.FlavorAny)
+
 	agentID := "test-agent-" + uuid.New().String()[:8]
+	spaceAgentID := "test-agent-space-" + uuid.New().String()[:8]
+	spaceID := fmt.Sprintf("test-space-%s", uuid.New().String()[:8])
 
 	resource.Test(t, resource.TestCase{
 		PreCheck: func() { acctest.PreCheckWithWorkflowsEnabled(t, minKibanaAgentBuilderAPIVersion) },
 		Steps: []resource.TestStep{
 			{
-				SkipFunc:                 versionutils.CheckIfVersionIsUnsupported(minKibanaAgentBuilderAPIVersion),
 				ProtoV6ProviderFactories: acctest.Providers,
 				ConfigDirectory:          acctest.NamedTestCaseDirectory("read"),
 				ConfigVariables: config.Variables{
 					"agent_id": config.StringVariable(agentID),
 				},
 				Check: resource.ComposeAggregateTestCheckFunc(
-					resource.TestCheckResourceAttrSet(dataSourceID, "id"),
+					resource.TestCheckResourceAttr(dataSourceID, "id", "default/"+agentID),
 					resource.TestCheckResourceAttr(dataSourceID, "agent_id", agentID),
+					resource.TestCheckResourceAttr(dataSourceID, "space_id", "default"),
 					resource.TestCheckResourceAttr(dataSourceID, "name", "Test Agent"),
+					resource.TestCheckResourceAttr(dataSourceID, "description", "A test agent for export"),
+					resource.TestCheckResourceAttr(dataSourceID, "instructions", "You are a helpful assistant."),
+					resource.TestCheckResourceAttr(dataSourceID, "include_dependencies", "false"),
+					resource.TestCheckResourceAttr(dataSourceID, "tools.#", "0"),
+				),
+			},
+			{
+				ProtoV6ProviderFactories: acctest.Providers,
+				ConfigDirectory:          acctest.NamedTestCaseDirectory("read_space"),
+				ConfigVariables: config.Variables{
+					"agent_id": config.StringVariable(spaceAgentID),
+					"space_id": config.StringVariable(spaceID),
+				},
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr(dataSourceID, "id", spaceID+"/"+spaceAgentID),
+					resource.TestCheckResourceAttr(dataSourceID, "agent_id", spaceAgentID),
+					resource.TestCheckResourceAttr(dataSourceID, "space_id", spaceID),
+					resource.TestCheckResourceAttr(dataSourceID, "name", "Space Agent"),
+					resource.TestCheckResourceAttr(dataSourceID, "description", "A space-scoped agent for export"),
+					resource.TestCheckResourceAttr(dataSourceID, "avatar_color", "#BFDBFF"),
+					resource.TestCheckResourceAttr(dataSourceID, "avatar_symbol", "SA"),
+					resource.TestCheckResourceAttr(dataSourceID, "labels.#", "2"),
+					resource.TestCheckTypeSetElemAttr(dataSourceID, "labels.*", "agent"),
+					resource.TestCheckTypeSetElemAttr(dataSourceID, "labels.*", "space"),
+					resource.TestCheckResourceAttr(dataSourceID, "instructions", "You are a helpful assistant for a Kibana space."),
 					resource.TestCheckResourceAttr(dataSourceID, "include_dependencies", "false"),
 					resource.TestCheckResourceAttr(dataSourceID, "tools.#", "0"),
 				),
@@ -168,7 +199,44 @@ func TestAccDataSourceKibanaAgentBuilderAgent(t *testing.T) {
 	})
 }
 
+func TestAccDataSourceKibanaAgentBuilderAgentKibanaConnection(t *testing.T) {
+	versionutils.SkipIfUnsupported(t, minKibanaAgentBuilderAPIVersion, versionutils.FlavorAny)
+
+	agentID := "test-agent-kbconn-" + uuid.New().String()[:8]
+
+	checks := []resource.TestCheckFunc{
+		resource.TestCheckResourceAttr(dataSourceID, "id", "default/"+agentID),
+		resource.TestCheckResourceAttr(dataSourceID, "agent_id", agentID),
+		resource.TestCheckResourceAttr(dataSourceID, "space_id", "default"),
+		resource.TestCheckResourceAttr(dataSourceID, "name", "Test Agent (kibana_connection)"),
+		resource.TestCheckResourceAttr(dataSourceID, "kibana_connection.#", "1"),
+		resource.TestCheckResourceAttr(dataSourceID, "kibana_connection.0.endpoints.#", "1"),
+		resource.TestCheckResourceAttr(dataSourceID, "kibana_connection.0.endpoints.0", strings.TrimSpace(os.Getenv("KIBANA_ENDPOINT"))),
+		resource.TestCheckResourceAttr(dataSourceID, "kibana_connection.0.insecure", "false"),
+	}
+	checks = append(checks, acctest.KibanaConnectionAuthChecks(dataSourceID)...)
+
+	resource.Test(t, resource.TestCase{
+		PreCheck: func() {
+			acctest.PreCheckWithExplicitKibanaEndpoint(t)
+			acctest.PreCheckWithWorkflowsEnabled(t, minKibanaAgentBuilderAPIVersion)
+		},
+		Steps: []resource.TestStep{
+			{
+				ProtoV6ProviderFactories: acctest.Providers,
+				ConfigDirectory:          acctest.NamedTestCaseDirectory("read"),
+				ConfigVariables: acctest.KibanaConnectionVariables(config.Variables{
+					"agent_id": config.StringVariable(agentID),
+				}),
+				Check: resource.ComposeAggregateTestCheckFunc(checks...),
+			},
+		},
+	})
+}
+
 func TestAccDataSourceKibanaAgentBuilderAgentWithDependencies(t *testing.T) {
+	versionutils.SkipIfUnsupported(t, minKibanaAgentBuilderAPIVersion, versionutils.FlavorAny)
+
 	agentID := "test-agent-deps-" + uuid.New().String()[:8]
 	esqlToolID := "test-esql-tool-" + uuid.New().String()[:8]
 	workflowToolID := "test-wf-tool-" + uuid.New().String()[:8]
@@ -177,7 +245,6 @@ func TestAccDataSourceKibanaAgentBuilderAgentWithDependencies(t *testing.T) {
 		PreCheck: func() { acctest.PreCheckWithWorkflowsEnabled(t, minKibanaAgentBuilderWorkflowAPIVersion) },
 		Steps: []resource.TestStep{
 			{
-				SkipFunc:                 versionutils.CheckIfVersionIsUnsupported(minKibanaAgentBuilderAPIVersion),
 				ProtoV6ProviderFactories: acctest.Providers,
 				ConfigDirectory:          acctest.NamedTestCaseDirectory("read"),
 				ConfigVariables: config.Variables{
@@ -186,11 +253,91 @@ func TestAccDataSourceKibanaAgentBuilderAgentWithDependencies(t *testing.T) {
 					"workflow_tool_id": config.StringVariable(workflowToolID),
 				},
 				Check: resource.ComposeAggregateTestCheckFunc(
-					resource.TestCheckResourceAttrSet(dataSourceID, "id"),
+					resource.TestCheckResourceAttr(dataSourceID, "id", "default/"+agentID),
 					resource.TestCheckResourceAttr(dataSourceID, "agent_id", agentID),
+					resource.TestCheckResourceAttr(dataSourceID, "space_id", "default"),
 					resource.TestCheckResourceAttr(dataSourceID, "name", "Test Agent With Tools"),
 					resource.TestCheckResourceAttr(dataSourceID, "include_dependencies", "true"),
 					resource.TestCheckResourceAttr(dataSourceID, "tools.#", "2"),
+					resource.TestCheckResourceAttr(dataSourceID, "tools.0.id", "default/"+esqlToolID),
+					resource.TestCheckResourceAttr(dataSourceID, "tools.0.space_id", "default"),
+					resource.TestCheckResourceAttr(dataSourceID, "tools.0.tool_id", esqlToolID),
+					resource.TestCheckResourceAttr(dataSourceID, "tools.0.type", "esql"),
+					resource.TestCheckResourceAttr(dataSourceID, "tools.0.description", "Test ES|QL tool"),
+					resource.TestCheckResourceAttr(dataSourceID, "tools.0.readonly", "false"),
+					resource.TestCheckResourceAttr(dataSourceID, "tools.0.tags.#", "2"),
+					resource.TestCheckTypeSetElemAttr(dataSourceID, "tools.0.tags.*", "esql"),
+					resource.TestCheckTypeSetElemAttr(dataSourceID, "tools.0.tags.*", "test"),
+					resource.TestCheckResourceAttrPair(dataSourceID, "tools.0.configuration", "elasticstack_kibana_agentbuilder_tool.esql", "configuration"),
+					resource.TestCheckResourceAttr(dataSourceID, "tools.1.id", "default/"+workflowToolID),
+					resource.TestCheckResourceAttr(dataSourceID, "tools.1.space_id", "default"),
+					resource.TestCheckResourceAttr(dataSourceID, "tools.1.tool_id", workflowToolID),
+					resource.TestCheckResourceAttr(dataSourceID, "tools.1.type", "workflow"),
+					resource.TestCheckResourceAttr(dataSourceID, "tools.1.description", "Workflow tool"),
+					resource.TestCheckResourceAttr(dataSourceID, "tools.1.readonly", "false"),
+					resource.TestCheckResourceAttrPair(dataSourceID, "tools.1.configuration", "elasticstack_kibana_agentbuilder_tool.workflow", "configuration"),
+					resource.TestCheckResourceAttrPair(dataSourceID, "tools.1.workflow_id", "elasticstack_kibana_agentbuilder_workflow.test", "workflow_id"),
+					resource.TestCheckResourceAttrPair(dataSourceID, "tools.1.workflow_configuration_yaml", "elasticstack_kibana_agentbuilder_workflow.test", "configuration_yaml"),
+				),
+			},
+		},
+	})
+}
+
+func TestAccResourceAgentBuilderAgentAvatar(t *testing.T) {
+	versionutils.SkipIfUnsupported(t, minKibanaAgentBuilderAPIVersion, versionutils.FlavorAny)
+
+	agentID := "test-agent-avatar-" + uuid.New().String()[:8]
+
+	resource.Test(t, resource.TestCase{
+		PreCheck: func() { acctest.PreCheckWithWorkflowsEnabled(t, minKibanaAgentBuilderAPIVersion) },
+		Steps: []resource.TestStep{
+			{
+				ProtoV6ProviderFactories: acctest.Providers,
+				ConfigDirectory:          acctest.NamedTestCaseDirectory("create_avatar"),
+				ConfigVariables: config.Variables{
+					"agent_id": config.StringVariable(agentID),
+				},
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr(testResourceID, "avatar_color", "#BFDBFF"),
+					resource.TestCheckResourceAttr(testResourceID, "avatar_symbol", "TA"),
+				),
+			},
+			{
+				ProtoV6ProviderFactories: acctest.Providers,
+				ConfigDirectory:          acctest.NamedTestCaseDirectory("update_no_avatar"),
+				ConfigVariables: config.Variables{
+					"agent_id": config.StringVariable(agentID),
+				},
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr(testResourceID, "avatar_color", ""),
+					resource.TestCheckResourceAttr(testResourceID, "avatar_symbol", ""),
+				),
+			},
+		},
+	})
+}
+
+func TestAccResourceAgentBuilderAgentKibanaConnection(t *testing.T) {
+	versionutils.SkipIfUnsupported(t, minKibanaAgentBuilderAPIVersion, versionutils.FlavorAny)
+
+	agentID := "test-agent-kbconn-" + uuid.New().String()[:8]
+
+	resource.Test(t, resource.TestCase{
+		PreCheck: func() {
+			acctest.PreCheckWithExplicitKibanaEndpoint(t)
+			acctest.PreCheckWithWorkflowsEnabled(t, minKibanaAgentBuilderAPIVersion)
+		},
+		Steps: []resource.TestStep{
+			{
+				ProtoV6ProviderFactories: acctest.Providers,
+				ConfigDirectory:          acctest.NamedTestCaseDirectory("create"),
+				ConfigVariables: acctest.KibanaConnectionVariables(config.Variables{
+					"agent_id": config.StringVariable(agentID),
+				}),
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr(testResourceID, "kibana_connection.#", "1"),
+					resource.TestCheckResourceAttr(testResourceID, "kibana_connection.0.insecure", "false"),
 				),
 			},
 		},
@@ -198,6 +345,8 @@ func TestAccDataSourceKibanaAgentBuilderAgentWithDependencies(t *testing.T) {
 }
 
 func TestAccDataSourceKibanaAgentBuilderAgentWorkflowTool(t *testing.T) {
+	versionutils.SkipIfUnsupported(t, minKibanaAgentBuilderAPIVersion, versionutils.FlavorAny)
+
 	agentID := "test-agent-wft-" + uuid.New().String()[:8]
 	workflowToolID := "test-wf-tool-" + uuid.New().String()[:8]
 
@@ -205,7 +354,6 @@ func TestAccDataSourceKibanaAgentBuilderAgentWorkflowTool(t *testing.T) {
 		PreCheck: func() { acctest.PreCheckWithWorkflowsEnabled(t, minKibanaAgentBuilderWorkflowAPIVersion) },
 		Steps: []resource.TestStep{
 			{
-				SkipFunc:                 versionutils.CheckIfVersionIsUnsupported(minKibanaAgentBuilderAPIVersion),
 				ProtoV6ProviderFactories: acctest.Providers,
 				ConfigDirectory:          acctest.NamedTestCaseDirectory("read"),
 				ConfigVariables: config.Variables{
@@ -213,13 +361,21 @@ func TestAccDataSourceKibanaAgentBuilderAgentWorkflowTool(t *testing.T) {
 					"workflow_tool_id": config.StringVariable(workflowToolID),
 				},
 				Check: resource.ComposeAggregateTestCheckFunc(
-					resource.TestCheckResourceAttrSet(dataSourceID, "id"),
+					resource.TestCheckResourceAttr(dataSourceID, "id", "default/"+agentID),
 					resource.TestCheckResourceAttr(dataSourceID, "agent_id", agentID),
+					resource.TestCheckResourceAttr(dataSourceID, "space_id", "default"),
 					resource.TestCheckResourceAttr(dataSourceID, "name", "Agent With Workflow Tool"),
 					resource.TestCheckResourceAttr(dataSourceID, "include_dependencies", "true"),
 					resource.TestCheckResourceAttr(dataSourceID, "tools.#", "1"),
-					resource.TestCheckResourceAttrSet(dataSourceID, "tools.0.workflow_id"),
-					resource.TestCheckResourceAttrSet(dataSourceID, "tools.0.workflow_configuration_yaml"),
+					resource.TestCheckResourceAttr(dataSourceID, "tools.0.id", "default/"+workflowToolID),
+					resource.TestCheckResourceAttr(dataSourceID, "tools.0.space_id", "default"),
+					resource.TestCheckResourceAttr(dataSourceID, "tools.0.tool_id", workflowToolID),
+					resource.TestCheckResourceAttr(dataSourceID, "tools.0.type", "workflow"),
+					resource.TestCheckResourceAttr(dataSourceID, "tools.0.description", "Workflow tool"),
+					resource.TestCheckResourceAttr(dataSourceID, "tools.0.readonly", "false"),
+					resource.TestCheckResourceAttrPair(dataSourceID, "tools.0.configuration", "elasticstack_kibana_agentbuilder_tool.workflow", "configuration"),
+					resource.TestCheckResourceAttrPair(dataSourceID, "tools.0.workflow_id", "elasticstack_kibana_agentbuilder_workflow.test", "workflow_id"),
+					resource.TestCheckResourceAttrPair(dataSourceID, "tools.0.workflow_configuration_yaml", "elasticstack_kibana_agentbuilder_workflow.test", "configuration_yaml"),
 				),
 			},
 		},

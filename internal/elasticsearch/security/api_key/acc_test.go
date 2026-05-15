@@ -22,6 +22,7 @@ import (
 	_ "embed"
 	"encoding/json"
 	"fmt"
+	"os"
 	"reflect"
 	"regexp"
 	"strings"
@@ -85,9 +86,11 @@ func TestAccResourceSecurityAPIKey(t *testing.T) {
 						return nil
 					}),
 					resource.TestCheckResourceAttrSet("elasticstack_elasticsearch_security_api_key.test", "expiration"),
+					resource.TestCheckResourceAttrSet("elasticstack_elasticsearch_security_api_key.test", "expiration_timestamp"),
 					resource.TestCheckResourceAttrSet("elasticstack_elasticsearch_security_api_key.test", "api_key"),
 					resource.TestCheckResourceAttrSet("elasticstack_elasticsearch_security_api_key.test", "encoded"),
 					resource.TestCheckResourceAttrSet("elasticstack_elasticsearch_security_api_key.test", "id"),
+					resource.TestCheckResourceAttrSet("elasticstack_elasticsearch_security_api_key.test", "key_id"),
 				),
 			},
 			{
@@ -123,9 +126,11 @@ func TestAccResourceSecurityAPIKey(t *testing.T) {
 						return nil
 					}),
 					resource.TestCheckResourceAttrSet("elasticstack_elasticsearch_security_api_key.test", "expiration"),
+					resource.TestCheckResourceAttrSet("elasticstack_elasticsearch_security_api_key.test", "expiration_timestamp"),
 					resource.TestCheckResourceAttrSet("elasticstack_elasticsearch_security_api_key.test", "api_key"),
 					resource.TestCheckResourceAttrSet("elasticstack_elasticsearch_security_api_key.test", "encoded"),
 					resource.TestCheckResourceAttrSet("elasticstack_elasticsearch_security_api_key.test", "id"),
+					resource.TestCheckResourceAttrSet("elasticstack_elasticsearch_security_api_key.test", "key_id"),
 				),
 			},
 		},
@@ -138,13 +143,14 @@ func TestAccResourceSecurityAPIKeyRotation(t *testing.T) {
 	var firstKeyID string
 	var firstRotationID string
 
+	versionutils.SkipIfUnsupported(t, apikey.MinVersion, versionutils.FlavorAny)
+
 	resource.Test(t, resource.TestCase{
 		PreCheck:     func() { acctest.PreCheck(t) },
 		CheckDestroy: checkResourceSecurityAPIKeyDestroy,
 		Steps: []resource.TestStep{
 			{
 				ProtoV6ProviderFactories: acctest.Providers,
-				SkipFunc:                 versionutils.CheckIfVersionIsUnsupported(apikey.MinVersion),
 				ConfigDirectory:          acctest.NamedTestCaseDirectory("rotation"),
 				ConfigVariables: config.Variables{
 					"api_key_name": config.StringVariable(apiKeyName),
@@ -171,7 +177,6 @@ func TestAccResourceSecurityAPIKeyRotation(t *testing.T) {
 			},
 			{
 				ProtoV6ProviderFactories: acctest.Providers,
-				SkipFunc:                 versionutils.CheckIfVersionIsUnsupported(apikey.MinVersion),
 				ConfigDirectory:          acctest.NamedTestCaseDirectory("rotation"),
 				ConfigVariables: config.Variables{
 					"api_key_name": config.StringVariable(apiKeyName),
@@ -202,13 +207,14 @@ func TestAccResourceSecurityAPIKeyWithRemoteIndices(t *testing.T) {
 	// generate a random name
 	apiKeyName := sdkacctest.RandStringFromCharSet(10, sdkacctest.CharSetAlphaNum)
 
+	versionutils.SkipIfUnsupported(t, minSupportedRemoteIndicesVersion, versionutils.FlavorAny)
+
 	resource.Test(t, resource.TestCase{
 		PreCheck:     func() { acctest.PreCheck(t) },
 		CheckDestroy: checkResourceSecurityAPIKeyDestroy,
 		Steps: []resource.TestStep{
 			{
 				ProtoV6ProviderFactories: acctest.Providers,
-				SkipFunc:                 versionutils.CheckIfVersionIsUnsupported(minSupportedRemoteIndicesVersion),
 				ConfigDirectory:          acctest.NamedTestCaseDirectory("create"),
 				ConfigVariables: config.Variables{
 					"api_key_name": config.StringVariable(apiKeyName),
@@ -259,13 +265,14 @@ func TestAccResourceSecurityAPIKeyWithWorkflowRestriction(t *testing.T) {
 	// generate a random name
 	apiKeyName := sdkacctest.RandStringFromCharSet(10, sdkacctest.CharSetAlphaNum)
 
+	versionutils.SkipIfUnsupported(t, apikey.MinVersionWithRestriction, versionutils.FlavorAny)
+
 	resource.Test(t, resource.TestCase{
 		PreCheck:     func() { acctest.PreCheck(t) },
 		CheckDestroy: checkResourceSecurityAPIKeyDestroy,
 		Steps: []resource.TestStep{
 			{
 				ProtoV6ProviderFactories: acctest.Providers,
-				SkipFunc:                 versionutils.CheckIfVersionIsUnsupported(apikey.MinVersionWithRestriction),
 				ConfigDirectory:          acctest.NamedTestCaseDirectory("create"),
 				ConfigVariables: config.Variables{
 					"api_key_name": config.StringVariable(apiKeyName),
@@ -349,6 +356,8 @@ func TestAccResourceSecurityAPIKeyFromSDK(t *testing.T) {
 	apiKeyName := sdkacctest.RandStringFromCharSet(10, sdkacctest.CharSetAlphaNum)
 	var initialAPIKey string
 
+	versionutils.SkipIfUnsupported(t, apikey.MinVersion, versionutils.FlavorAny)
+
 	resource.Test(t, resource.TestCase{
 		PreCheck:     func() { acctest.PreCheck(t) },
 		CheckDestroy: checkResourceSecurityAPIKeyDestroy,
@@ -361,8 +370,7 @@ func TestAccResourceSecurityAPIKeyFromSDK(t *testing.T) {
 						VersionConstraint: "0.11.9",
 					},
 				},
-				SkipFunc: versionutils.CheckIfVersionIsUnsupported(apikey.MinVersion),
-				Config:   testAccResourceSecurityAPIKeyFromSDKConfig,
+				Config: testAccResourceSecurityAPIKeyFromSDKConfig,
 				ConfigVariables: config.Variables{
 					"api_key_name": config.StringVariable(apiKeyName),
 				},
@@ -384,7 +392,6 @@ func TestAccResourceSecurityAPIKeyFromSDK(t *testing.T) {
 			},
 			{
 				ProtoV6ProviderFactories: acctest.Providers,
-				SkipFunc:                 versionutils.CheckIfVersionIsUnsupported(apikey.MinVersion),
 				ConfigDirectory:          acctest.NamedTestCaseDirectory("no_expiration"),
 				ConfigVariables: config.Variables{
 					"api_key_name": config.StringVariable(apiKeyName),
@@ -403,6 +410,94 @@ func TestAccResourceSecurityAPIKeyFromSDK(t *testing.T) {
 	})
 }
 
+func TestAccResourceSecurityAPIKeyNonExpiring(t *testing.T) {
+	apiKeyName := sdkacctest.RandStringFromCharSet(10, sdkacctest.CharSetAlphaNum)
+
+	versionutils.SkipIfUnsupported(t, apikey.MinVersion, versionutils.FlavorAny)
+
+	resource.Test(t, resource.TestCase{
+		PreCheck:     func() { acctest.PreCheck(t) },
+		CheckDestroy: checkResourceSecurityAPIKeyDestroy,
+		Steps: []resource.TestStep{
+			{
+				ProtoV6ProviderFactories: acctest.Providers,
+				ConfigDirectory:          acctest.NamedTestCaseDirectory("create"),
+				ConfigVariables: config.Variables{
+					"api_key_name": config.StringVariable(apiKeyName),
+				},
+				Check: resource.ComposeTestCheckFunc(
+					resource.TestCheckResourceAttr("elasticstack_elasticsearch_security_api_key.test", "name", apiKeyName),
+					resource.TestCheckResourceAttr("elasticstack_elasticsearch_security_api_key.test", "type", "rest"),
+					resource.TestCheckNoResourceAttr("elasticstack_elasticsearch_security_api_key.test", "expiration"),
+					resource.TestCheckResourceAttr("elasticstack_elasticsearch_security_api_key.test", "expiration_timestamp", "0"),
+					resource.TestCheckResourceAttrSet("elasticstack_elasticsearch_security_api_key.test", "api_key"),
+					resource.TestCheckResourceAttrSet("elasticstack_elasticsearch_security_api_key.test", "encoded"),
+					resource.TestCheckResourceAttrSet("elasticstack_elasticsearch_security_api_key.test", "id"),
+					resource.TestCheckResourceAttrSet("elasticstack_elasticsearch_security_api_key.test", "key_id"),
+				),
+			},
+		},
+	})
+}
+
+func TestAccResourceSecurityAPIKeyExplicitConnection(t *testing.T) {
+	apiKeyName := sdkacctest.RandStringFromCharSet(10, sdkacctest.CharSetAlphaNum)
+	endpoints := apiKeyESEndpoints()
+	if len(endpoints) == 0 {
+		t.Fatal("ELASTICSEARCH_ENDPOINTS must contain at least one endpoint")
+	}
+
+	versionutils.SkipIfUnsupported(t, apikey.MinVersion, versionutils.FlavorAny)
+
+	resource.Test(t, resource.TestCase{
+		PreCheck:     func() { acctest.PreCheck(t) },
+		CheckDestroy: checkResourceSecurityAPIKeyDestroy,
+		Steps: []resource.TestStep{
+			{
+				ProtoV6ProviderFactories: acctest.Providers,
+				ConfigDirectory:          acctest.NamedTestCaseDirectory("create"),
+				ConfigVariables: func() config.Variables {
+					endpointVars := make([]config.Variable, len(endpoints))
+					for i, ep := range endpoints {
+						endpointVars[i] = config.StringVariable(ep)
+					}
+					return config.Variables{
+						"api_key_name": config.StringVariable(apiKeyName),
+						"endpoints":    config.ListVariable(endpointVars...),
+						"api_key":      config.StringVariable(os.Getenv("ELASTICSEARCH_API_KEY")),
+						"username":     config.StringVariable(os.Getenv("ELASTICSEARCH_USERNAME")),
+						"password":     config.StringVariable(os.Getenv("ELASTICSEARCH_PASSWORD")),
+					}
+				}(),
+				Check: resource.ComposeTestCheckFunc(
+					resource.TestCheckResourceAttr("elasticstack_elasticsearch_security_api_key.test", "name", apiKeyName),
+					resource.TestCheckResourceAttr("elasticstack_elasticsearch_security_api_key.test", "elasticsearch_connection.#", "1"),
+					resource.TestCheckResourceAttr("elasticstack_elasticsearch_security_api_key.test", "elasticsearch_connection.0.endpoints.#", fmt.Sprintf("%d", len(endpoints))),
+					resource.TestCheckResourceAttr("elasticstack_elasticsearch_security_api_key.test", "elasticsearch_connection.0.endpoints.0", endpoints[0]),
+					resource.TestCheckResourceAttr("elasticstack_elasticsearch_security_api_key.test", "elasticsearch_connection.0.insecure", "true"),
+					resource.TestCheckResourceAttrSet("elasticstack_elasticsearch_security_api_key.test", "api_key"),
+					resource.TestCheckResourceAttrSet("elasticstack_elasticsearch_security_api_key.test", "encoded"),
+					resource.TestCheckResourceAttrSet("elasticstack_elasticsearch_security_api_key.test", "id"),
+					resource.TestCheckResourceAttrSet("elasticstack_elasticsearch_security_api_key.test", "key_id"),
+				),
+			},
+		},
+	})
+}
+
+func apiKeyESEndpoints() []string {
+	rawEndpoints := os.Getenv("ELASTICSEARCH_ENDPOINTS")
+	parts := strings.Split(rawEndpoints, ",")
+	endpoints := make([]string, 0, len(parts))
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		if part != "" {
+			endpoints = append(endpoints, part)
+		}
+	}
+	return endpoints
+}
+
 func checkResourceSecurityAPIKeyDestroy(s *terraform.State) error {
 	client, err := clients.NewAcceptanceTestingElasticsearchScopedClient()
 	if err != nil {
@@ -415,7 +510,7 @@ func checkResourceSecurityAPIKeyDestroy(s *terraform.State) error {
 		}
 		compID, _ := clients.CompositeIDFromStr(rs.Primary.ID)
 
-		apiKey, diags := elasticsearch.GetAPIKey(client, compID.ResourceID)
+		apiKey, diags := elasticsearch.GetAPIKey(context.Background(), client, compID.ResourceID)
 		if diags.HasError() {
 			return fmt.Errorf("Unable to get API key %v", diags)
 		}
@@ -431,13 +526,14 @@ func TestAccResourceSecurityAPIKeyCrossCluster(t *testing.T) {
 	// generate a random name
 	apiKeyName := sdkacctest.RandStringFromCharSet(10, sdkacctest.CharSetAlphaNum)
 
+	versionutils.SkipIfUnsupported(t, apikey.MinVersionWithCrossCluster, versionutils.FlavorAny)
+
 	resource.Test(t, resource.TestCase{
 		PreCheck:     func() { acctest.PreCheck(t) },
 		CheckDestroy: checkResourceSecurityAPIKeyDestroy,
 		Steps: []resource.TestStep{
 			{
 				ProtoV6ProviderFactories: acctest.Providers,
-				SkipFunc:                 versionutils.CheckIfVersionIsUnsupported(apikey.MinVersionWithCrossCluster),
 				ConfigDirectory:          acctest.NamedTestCaseDirectory("create"),
 				ConfigVariables: config.Variables{
 					"api_key_name": config.StringVariable(apiKeyName),
@@ -447,12 +543,14 @@ func TestAccResourceSecurityAPIKeyCrossCluster(t *testing.T) {
 					resource.TestCheckResourceAttr("elasticstack_elasticsearch_security_api_key.test", "type", "cross_cluster"),
 					resource.TestCheckResourceAttr("elasticstack_elasticsearch_security_api_key.test", "access.search.0.names.0", "logs-*"),
 					resource.TestCheckResourceAttr("elasticstack_elasticsearch_security_api_key.test", "access.search.0.names.1", "metrics-*"),
+					resource.TestCheckResourceAttr("elasticstack_elasticsearch_security_api_key.test", "access.search.0.allow_restricted_indices", "true"),
 					resource.TestCheckResourceAttr("elasticstack_elasticsearch_security_api_key.test", "access.replication.0.names.0", "archive-*"),
+					resource.TestCheckResourceAttr("elasticstack_elasticsearch_security_api_key.test", "metadata", `{"description":"Cross-cluster test key","environment":"test"}`),
+					resource.TestCheckResourceAttrSet("elasticstack_elasticsearch_security_api_key.test", "expiration_timestamp"),
 				),
 			},
 			{
 				ProtoV6ProviderFactories: acctest.Providers,
-				SkipFunc:                 versionutils.CheckIfVersionIsUnsupported(apikey.MinVersionWithCrossCluster),
 				ConfigDirectory:          acctest.NamedTestCaseDirectory("update"),
 				ConfigVariables: config.Variables{
 					"api_key_name": config.StringVariable(apiKeyName),
@@ -462,7 +560,10 @@ func TestAccResourceSecurityAPIKeyCrossCluster(t *testing.T) {
 					resource.TestCheckResourceAttr("elasticstack_elasticsearch_security_api_key.test", "type", "cross_cluster"),
 					resource.TestCheckResourceAttr("elasticstack_elasticsearch_security_api_key.test", "access.search.0.names.0", "log-*"),
 					resource.TestCheckResourceAttr("elasticstack_elasticsearch_security_api_key.test", "access.search.0.names.1", "metrics-*"),
+					resource.TestCheckResourceAttr("elasticstack_elasticsearch_security_api_key.test", "access.search.0.allow_restricted_indices", "false"),
 					resource.TestCheckResourceAttr("elasticstack_elasticsearch_security_api_key.test", "access.replication.0.names.0", "archives-*"),
+					resource.TestCheckResourceAttr("elasticstack_elasticsearch_security_api_key.test", "metadata", `{"description":"Cross-cluster test key updated","environment":"test"}`),
+					resource.TestCheckResourceAttrSet("elasticstack_elasticsearch_security_api_key.test", "expiration_timestamp"),
 				),
 			},
 		},
@@ -473,13 +574,14 @@ func TestAccResourceSecurityAPIKeyWithDefaultAllowRestrictedIndices(t *testing.T
 	// generate a random name
 	apiKeyName := sdkacctest.RandStringFromCharSet(10, sdkacctest.CharSetAlphaNum)
 
+	versionutils.SkipIfUnsupported(t, apikey.MinVersion, versionutils.FlavorAny)
+
 	resource.Test(t, resource.TestCase{
 		PreCheck:     func() { acctest.PreCheck(t) },
 		CheckDestroy: checkResourceSecurityAPIKeyDestroy,
 		Steps: []resource.TestStep{
 			{
 				ProtoV6ProviderFactories: acctest.Providers,
-				SkipFunc:                 versionutils.CheckIfVersionIsUnsupported(apikey.MinVersion),
 				ConfigDirectory:          acctest.NamedTestCaseDirectory("create"),
 				ConfigVariables: config.Variables{
 					"api_key_name": config.StringVariable(apiKeyName),
@@ -511,6 +613,33 @@ func TestAccResourceSecurityAPIKeyWithDefaultAllowRestrictedIndices(t *testing.T
 					resource.TestCheckResourceAttrSet("elasticstack_elasticsearch_security_api_key.test", "api_key"),
 					resource.TestCheckResourceAttrSet("elasticstack_elasticsearch_security_api_key.test", "encoded"),
 					resource.TestCheckResourceAttrSet("elasticstack_elasticsearch_security_api_key.test", "id"),
+				),
+			},
+		},
+	})
+}
+
+func TestAccResourceSecurityAPIKeyNoRoleDescriptors(t *testing.T) {
+	apiKeyName := sdkacctest.RandStringFromCharSet(10, sdkacctest.CharSetAlphaNum)
+
+	versionutils.SkipIfUnsupported(t, apikey.MinVersion, versionutils.FlavorAny)
+
+	resource.Test(t, resource.TestCase{
+		PreCheck:     func() { acctest.PreCheck(t) },
+		CheckDestroy: checkResourceSecurityAPIKeyDestroy,
+		Steps: []resource.TestStep{
+			{
+				ProtoV6ProviderFactories: acctest.Providers,
+				ConfigDirectory:          acctest.NamedTestCaseDirectory("create"),
+				ConfigVariables: config.Variables{
+					"api_key_name": config.StringVariable(apiKeyName),
+				},
+				Check: resource.ComposeTestCheckFunc(
+					resource.TestCheckResourceAttr("elasticstack_elasticsearch_security_api_key.test", "name", apiKeyName),
+					resource.TestCheckResourceAttrSet("elasticstack_elasticsearch_security_api_key.test", "api_key"),
+					resource.TestCheckResourceAttrSet("elasticstack_elasticsearch_security_api_key.test", "encoded"),
+					resource.TestCheckResourceAttrSet("elasticstack_elasticsearch_security_api_key.test", "id"),
+					resource.TestCheckResourceAttrSet("elasticstack_elasticsearch_security_api_key.test", "key_id"),
 				),
 			},
 		},

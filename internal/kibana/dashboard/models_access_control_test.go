@@ -18,36 +18,36 @@
 package dashboard
 
 import (
+	"context"
 	"testing"
 
 	"github.com/elastic/terraform-provider-elasticstack/generated/kbapi"
+	"github.com/elastic/terraform-provider-elasticstack/internal/kibana/dashboard/models"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/stretchr/testify/assert"
 )
 
 func TestAccessControlValue_toCreateAPI(t *testing.T) {
 	t.Run("nil receiver", func(t *testing.T) {
-		var m *AccessControlValue
-		apiModel := m.toCreateAPI()
-		assert.Nil(t, apiModel)
+		var m *models.AccessControlValue
+		apiModel := accessControlValueToCreateAPI(m)
+		assert.Nil(t, apiModel.AccessMode)
 	})
 
 	t.Run("empty values", func(t *testing.T) {
-		m := &AccessControlValue{
+		m := &models.AccessControlValue{
 			AccessMode: types.StringNull(),
 		}
-		apiModel := m.toCreateAPI()
-		assert.NotNil(t, apiModel)
+		apiModel := accessControlValueToCreateAPI(m)
 		assert.Nil(t, apiModel.AccessMode)
 	})
 
 	t.Run("filled values", func(t *testing.T) {
-		m := &AccessControlValue{
-			AccessMode: types.StringValue("private"),
+		m := &models.AccessControlValue{
+			AccessMode: types.StringValue("write_restricted"),
 		}
-		apiModel := m.toCreateAPI()
-		assert.NotNil(t, apiModel)
-		mode := kbapi.KbnDashboardDataAccessControlAccessMode("private")
+		apiModel := accessControlValueToCreateAPI(m)
+		mode := kbapi.KbnDashboardAccessControlAccessMode("write_restricted")
 		assert.Equal(t, &mode, apiModel.AccessMode)
 	})
 }
@@ -59,9 +59,44 @@ func TestNewAccessControlFromAPI(t *testing.T) {
 	})
 
 	t.Run("filled input", func(t *testing.T) {
-		accessMode := "private"
+		accessMode := "write_restricted"
 		val := newAccessControlFromAPI(&accessMode)
 		assert.NotNil(t, val)
-		assert.Equal(t, types.StringValue("private"), val.AccessMode)
+		assert.Equal(t, types.StringValue("write_restricted"), val.AccessMode)
 	})
+}
+
+func TestDashboardModel_populateFromAPI_clearsAccessControlWhenAccessModeMissing(t *testing.T) {
+	model := &models.DashboardModel{
+		AccessControl: &models.AccessControlValue{
+			AccessMode: types.StringValue("write_restricted"),
+		},
+	}
+
+	resp := &kbapi.GetDashboardsIdResponse{
+		JSON200: &struct {
+			Data     kbapi.KbnDashboardData                   `json:"data"`
+			Id       string                                   `json:"id"` //nolint:revive // var-naming: API struct field
+			Meta     kbapi.KbnAsCodeMeta                      `json:"meta"`
+			Warnings *[]kbapi.KbnDashboardDroppedPanelWarning `json:"warnings,omitempty"`
+		}{
+			Data: kbapi.KbnDashboardData{
+				Title: "test dashboard",
+				Query: kbapi.KbnAsCodeQuery{},
+				TimeRange: kbapi.KbnEsQueryServerTimeRangeSchema{
+					From: "now-15m",
+					To:   "now",
+				},
+				RefreshInterval: kbapi.KbnDataServiceServerRefreshIntervalSchema{
+					Pause: true,
+					Value: 0,
+				},
+			},
+			Id: "dashboard-id",
+		},
+	}
+
+	diags := dashboardPopulateFromAPI(context.Background(), model, resp, "dashboard-id", "default")
+	assert.False(t, diags.HasError())
+	assert.Nil(t, model.AccessControl)
 }

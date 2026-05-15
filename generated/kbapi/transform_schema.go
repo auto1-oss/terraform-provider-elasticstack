@@ -600,7 +600,6 @@ var transformers = []TransformFunc{
 	fixGetSpacesParams,
 	fixSpaceResponseSchemas,
 	fixSecurityExceptionListItems,
-	fixSecurityEntityStoreEntityTypeParams,
 	removeDuplicateOneOfRefs,
 	transformRemoveAnyOfWhenOneOfPresent,
 	fixDashboardPanelItemRefs,
@@ -608,6 +607,8 @@ var transformers = []TransformFunc{
 	fixSyntheticsMonitorModels,
 	fixSyntheticsMonitorParams,
 	fixAlertingRuleBody,
+	fixSloFloatFormats,
+	fixSloResponseArtifacts,
 	transformRemoveExamples,
 	transformRemoveUnusedComponents,
 	transformOmitEmptyNullable,
@@ -886,6 +887,22 @@ func transformKibanaPaths(schema *Schema) {
 		"responses.200.content.application/json.schema",
 		Map{"$ref": "#/components/schemas/Synthetics_getPrivateLocation"},
 	)
+	syntheticsPrivateLocationsPath.Post.Set(
+		"requestBody.content.application/json.schema.properties.geo.properties.lat.format",
+		"double",
+	)
+	syntheticsPrivateLocationsPath.Post.Set(
+		"requestBody.content.application/json.schema.properties.geo.properties.lon.format",
+		"double",
+	)
+	schema.Components.Set(
+		"schemas.Synthetics_getPrivateLocation.properties.geo.properties.lat.format",
+		"double",
+	)
+	schema.Components.Set(
+		"schemas.Synthetics_getPrivateLocation.properties.geo.properties.lon.format",
+		"double",
+	)
 
 	schema.Components.CreateRef(schema, "Data_views_data_view_response_object_inner", "schemas.Data_views_data_view_response_object.properties.data_view")
 	schema.Components.CreateRef(schema, "Data_views_sourcefilter_item", "schemas.Data_views_sourcefilters.items")
@@ -1030,14 +1047,9 @@ func removeBrokenDiscriminator(schema *Schema) {
 }
 
 func fixPutSecurityRoleName(schema *Schema) {
-	putEndpoint := schema.MustGetPath("/api/security/role/{name}").MustGetEndpoint("put")
-	putEndpoint.Delete("requestBody.content.application/json.schema.properties.kibana.items.properties.base.anyOf")
-	putEndpoint.Move("requestBody.content.application/json.schema.properties.kibana.items.properties.spaces.anyOf.1", "requestBody.content.application/json.schema.properties.kibana.items.properties.spaces")
-
-	postEndpoint := schema.MustGetPath("/api/security/roles").MustGetEndpoint("post")
-	postEndpoint.Move("requestBody.content.application/json.schema.properties.roles.additionalProperties", "requestBody.content.application/json.schema.properties.roles")
-	postEndpoint.Delete("requestBody.content.application/json.schema.properties.roles.properties.kibana.items.properties.base.anyOf")
-	postEndpoint.Move("requestBody.content.application/json.schema.properties.roles.properties.kibana.items.properties.spaces.anyOf.1", "requestBody.content.application/json.schema.properties.roles.properties.kibana.items.properties.spaces")
+	schema.Components.Delete("schemas.Kibana_HTTP_APIs_security_role_kibana_privilege.properties.base.anyOf")
+	schema.Components.Move("schemas.Kibana_HTTP_APIs_security_role_kibana_privilege.properties.spaces.anyOf.1", "schemas.Kibana_HTTP_APIs_security_role_kibana_privilege.properties.spaces")
+	schema.Components.Move("schemas.Kibana_HTTP_APIs_security_roles_bulk_create_or_update_payload.properties.roles.additionalProperties", "schemas.Kibana_HTTP_APIs_security_roles_bulk_create_or_update_payload.properties.roles")
 }
 
 func fixGetSpacesParams(schema *Schema) {
@@ -1093,16 +1105,26 @@ func fixSpaceResponseSchemas(schema *Schema) {
 
 func fixDashboardPanelItemRefs(schema *Schema) {
 	schema.Components.Move("schemas.kbn-dashboard-data.properties.panels.items.anyOf.0.anyOf", "schemas.kbn-dashboard-data.properties.panels.items.anyOf.0.oneOf")
-	schema.Components.Set("schemas.kbn-dashboard-data.properties.panels.items.anyOf.0.discriminator", Map{"propertyName": "type"})
+	schema.Components.Set(
+		"schemas.kbn-dashboard-data.properties.panels.items.anyOf.0.discriminator",
+		schema.Components.MustGetMap("schemas.kbn-dashboard-section.properties.panels.items.discriminator"),
+	)
 	schema.Components.CreateRef(schema, "dashboard_panel_item", "schemas.kbn-dashboard-section.properties.panels.items")
 	schema.Components.CreateRef(schema, "dashboard_panel_item", "schemas.kbn-dashboard-data.properties.panels.items.anyOf.0")
 	schema.Components.CreateRef(schema, "dashboard_panels", "schemas.kbn-dashboard-data.properties.panels")
+	schema.Components.CreateRef(schema, "dashboard_filters", "schemas.kbn-dashboard-data.properties.filters")
+	schema.Components.CreateRef(schema, "dashboard_pinned_panels", "schemas.kbn-dashboard-data.properties.pinned_panels")
 
 	dashboardIDPath := schema.MustGetPath("/api/dashboards/{id}")
 	dashboardIDPath.Put.Move("requestBody.content.application/json.schema.properties.panels.items.anyOf.0.anyOf", "requestBody.content.application/json.schema.properties.panels.items.anyOf.0.oneOf")
-	dashboardIDPath.Put.Set("requestBody.content.application/json.schema.properties.panels.items.anyOf.0.discriminator", Map{"propertyName": "type"})
+	dashboardIDPath.Put.Set(
+		"requestBody.content.application/json.schema.properties.panels.items.anyOf.0.discriminator",
+		schema.Components.MustGetMap("schemas.dashboard_panel_item.discriminator"),
+	)
 	dashboardIDPath.Put.CreateRef(schema, "dashboard_panel_item", "requestBody.content.application/json.schema.properties.panels.items.anyOf.0")
 	dashboardIDPath.Put.CreateRef(schema, "dashboard_panels", "requestBody.content.application/json.schema.properties.panels")
+	dashboardIDPath.Put.CreateRef(schema, "dashboard_filters", "requestBody.content.application/json.schema.properties.filters")
+	dashboardIDPath.Put.CreateRef(schema, "dashboard_pinned_panels", "requestBody.content.application/json.schema.properties.pinned_panels")
 
 	const panelTypePrefix = "kbn-dashboard-panel-type-"
 	panelOneOf := schema.Components.MustGetSlice("schemas.dashboard_panel_item.oneOf")
@@ -1134,50 +1156,6 @@ func fixSecurityExceptionListItems(schema *Schema) {
 
 	postExceptionListItem := exceptionListItems.MustGetEndpoint("post")
 	postExceptionListItem.CreateRef(schema, "Security_Exceptions_API_CreateExceptionListItem", "requestBody.content.application/json.schema")
-}
-
-func fixSecurityEntityStoreEntityTypeParams(schema *Schema) {
-	entityTypePathParam := func() Map {
-		return Map{
-			"example":  "user",
-			"in":       "path",
-			"name":     "entityType",
-			"required": true,
-			"schema": Map{
-				"$ref": "#/components/schemas/Security_Entity_Analytics_API_EntityType",
-			},
-		}
-	}
-
-	addEntityTypePathParam := func(endpoint Map) {
-		params, ok := endpoint.GetSlice("parameters")
-		if !ok {
-			endpoint.Set("parameters", Slice{entityTypePathParam()})
-			return
-		}
-
-		for _, param := range params {
-			paramMap, ok := param.(Map)
-			if !ok {
-				if rawMap, ok := param.(map[string]any); ok {
-					paramMap = Map(rawMap)
-				} else {
-					continue
-				}
-			}
-			name, _ := paramMap["name"].(string)
-			in, _ := paramMap["in"].(string)
-			if name == "entityType" && in == "path" {
-				return
-			}
-		}
-
-		endpoint.Set("parameters", append(Slice{entityTypePathParam()}, params...))
-	}
-
-	securityEntityStorePath := schema.MustGetPath("/api/security/entity_store/entities/{entityType}")
-	addEntityTypePathParam(securityEntityStorePath.MustGetEndpoint("post"))
-	addEntityTypePathParam(securityEntityStorePath.MustGetEndpoint("put"))
 }
 
 func removeDuplicateOneOfRefs(schema *Schema) {
@@ -1271,6 +1249,45 @@ func transformFleetPaths(schema *Schema) {
 	hostsPath.Post.CreateRef(schema, "server_host", "responses.200.content.application/json.schema.properties.item")
 	hostPath.Get.CreateRef(schema, "server_host", "responses.200.content.application/json.schema.properties.item")
 	hostPath.Put.CreateRef(schema, "server_host", "responses.200.content.application/json.schema.properties.item")
+
+	// Proxies
+	// https://github.com/elastic/kibana/blob/main/x-pack/plugins/fleet/common/types/models/fleet_proxy.ts
+	// https://github.com/elastic/kibana/blob/main/x-pack/plugins/fleet/common/types/rest_spec/fleet_proxies.ts
+
+	proxiesPath := schema.MustGetPath("/api/fleet/proxies")
+	proxyPath := schema.MustGetPath("/api/fleet/proxies/{itemId}")
+
+	// Lift the response item into a reusable named component (mirrors
+	// server_host above). This gives us a single FleetProxyItem Go type
+	// instead of one anonymous struct per endpoint.
+	proxiesPath.Get.CreateRef(schema, "fleet_proxy_item", "responses.200.content.application/json.schema.properties.items.items")
+	proxiesPath.Post.CreateRef(schema, "fleet_proxy_item", "responses.200.content.application/json.schema.properties.item")
+	proxyPath.Get.CreateRef(schema, "fleet_proxy_item", "responses.200.content.application/json.schema.properties.item")
+	proxyPath.Put.CreateRef(schema, "fleet_proxy_item", "responses.200.content.application/json.schema.properties.item")
+
+	// proxy_headers values are a string|boolean|number union. oapi-codegen
+	// only emits the typed AsX/FromX/MergeX/Marshal/Unmarshal helpers on a
+	// union when each anyOf branch is itself a $ref to a named component;
+	// when the branches are primitive inline types it emits an unusable
+	// struct with an unexported `union json.RawMessage` field. Define
+	// trivial named components for each primitive branch and a
+	// fleet_proxy_header_value union that refs them, then point every
+	// proxy_headers.additionalProperties at that union.
+	schema.Components.Set("schemas.fleet_proxy_header_value_string", Map{"type": "string"})
+	schema.Components.Set("schemas.fleet_proxy_header_value_boolean", Map{"type": "boolean"})
+	schema.Components.Set("schemas.fleet_proxy_header_value_number", Map{"type": "number"})
+	schema.Components.Set("schemas.fleet_proxy_header_value", Map{
+		"anyOf": Slice{
+			Map{"$ref": "#/components/schemas/fleet_proxy_header_value_string"},
+			Map{"$ref": "#/components/schemas/fleet_proxy_header_value_boolean"},
+			Map{"$ref": "#/components/schemas/fleet_proxy_header_value_number"},
+		},
+	})
+
+	headerValueRef := Map{"$ref": "#/components/schemas/fleet_proxy_header_value"}
+	schema.Components.Set("schemas.fleet_proxy_item.properties.proxy_headers.additionalProperties", headerValueRef)
+	proxiesPath.Post.Set("requestBody.content.application/json.schema.properties.proxy_headers.additionalProperties", headerValueRef)
+	proxyPath.Put.Set("requestBody.content.application/json.schema.properties.proxy_headers.additionalProperties", headerValueRef)
 
 	// Outputs
 	// https://github.com/elastic/kibana/blob/main/x-pack/plugins/fleet/common/types/models/output.ts
@@ -1498,6 +1515,48 @@ func fixAlertingRuleBody(schema *Schema) {
 	postEndpoint.CreateRef(schema, "Alerting_Rule_API_Body_Union", "requestBody.content.application/json.schema")
 }
 
+// fixSloFloatFormats adds format: double to all floating-point fields in SLO
+// schemas that the Terraform provider surfaces as Float64 attributes. Without
+// an explicit format the Kibana spec uses "type: number" which oapi-codegen
+// maps to float32, causing silent precision loss when users write values such
+// as 0.999 (see https://github.com/elastic/terraform-provider-elasticstack/issues/2396).
+// format: double instructs oapi-codegen to emit float64 instead, preserving
+// full IEEE-754 double precision throughout the read/write cycle.
+func fixSloFloatFormats(schema *Schema) {
+	// Objective target and timeslice target (the fields reported in issue #2396)
+	schema.Components.Set("schemas.SLOs_objective.properties.target.format", "double")
+	schema.Components.Set("schemas.SLOs_objective.properties.timesliceTarget.format", "double")
+
+	// Histogram range indicator good/total from & to
+	const histGoodFrom = "schemas.SLOs_indicator_properties_histogram.properties.params.properties.good.properties.from.format"
+	const histGoodTo = "schemas.SLOs_indicator_properties_histogram.properties.params.properties.good.properties.to.format"
+	const histTotalFrom = "schemas.SLOs_indicator_properties_histogram.properties.params.properties.total.properties.from.format"
+	const histTotalTo = "schemas.SLOs_indicator_properties_histogram.properties.params.properties.total.properties.to.format"
+	schema.Components.Set(histGoodFrom, "double")
+	schema.Components.Set(histGoodTo, "double")
+	schema.Components.Set(histTotalFrom, "double")
+	schema.Components.Set(histTotalTo, "double")
+
+	// APM latency threshold (milliseconds)
+	schema.Components.Set("schemas.SLOs_indicator_properties_apm_latency.properties.params.properties.threshold.format", "double")
+
+	// Timeslice metric threshold and percentile
+	schema.Components.Set("schemas.SLOs_indicator_properties_timeslice_metric.properties.params.properties.metric.properties.threshold.format", "double")
+	schema.Components.Set("schemas.SLOs_timeslice_metric_percentile_metric.properties.percentile.format", "double")
+}
+
+// fixSloResponseArtifacts adds the `artifacts` property to the SLO response
+// schema. Kibana's published OpenAPI omits it from SLOs_slo_with_summary_response
+// even though the GET endpoint returns it (it is documented on the create/update
+// request schemas). Adding it here lets oapi-codegen populate JSON200.Artifacts
+// directly, removing the need for the resource layer to re-decode the body.
+func fixSloResponseArtifacts(schema *Schema) {
+	schema.Components.Set(
+		"schemas.SLOs_slo_with_summary_response.properties.artifacts",
+		Map{"$ref": "#/components/schemas/SLOs_artifacts"},
+	)
+}
+
 func fixAlertingRuleParams(schema *Schema) {
 	postEndpoint := schema.MustGetPath("/api/alerting/rule/{id}").MustGetEndpoint("post")
 	postEndpoint.CreateRef(schema, "Alerting_Rule_API_Params", "requestBody.content.application/json.schema.anyOf.1.properties.params")
@@ -1559,8 +1618,8 @@ func fixSyntheticsMonitorModels(schema *Schema) {
 	schema.Components.Set("schemas.geo_pos", Map{
 		"additionalProperties": false,
 		"properties": Map{
-			"lat": Map{"type": "number"},
-			"lon": Map{"type": "number"},
+			"lat": Map{"format": "double", "type": "number"},
+			"lon": Map{"format": "double", "type": "number"},
 		},
 		"type": "object",
 	})
@@ -1660,5 +1719,20 @@ func fixSyntheticsMonitorModels(schema *Schema) {
 
 func fixSyntheticsMonitorParams(schema *Schema) {
 	getEndpoint := schema.MustGetPath("/api/synthetics/monitors").MustGetEndpoint("get")
-	getEndpoint.Set("parameters.12.schema", getEndpoint.MustGetMap("parameters.12.schema.oneOf.0"))
+	// Collapse query parameters whose oneOf union mixes a string-enum
+	// branch with an array-of-the-same-enum branch. oapi-codegen generates
+	// duplicate type names for the inner enum in that case (e.g. two
+	// declarations of GetSyntheticMonitorsParamsMonitorTypes1), which
+	// breaks the build. Picking the first oneOf branch (the scalar enum)
+	// matches the prior behaviour of these parameters and is what the
+	// rest of the generated client expected.
+	collapseToFirstOneOf := func(paramIndex int) {
+		key := fmt.Sprintf("parameters.%d.schema", paramIndex)
+		oneOfKey := fmt.Sprintf("%s.oneOf.0", key)
+		getEndpoint.Set(key, getEndpoint.MustGetMap(oneOfKey))
+	}
+
+	// monitorTypes (parameters.2) and useLogicalAndFor (parameters.12).
+	collapseToFirstOneOf(2)
+	collapseToFirstOneOf(12)
 }

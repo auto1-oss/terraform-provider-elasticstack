@@ -20,28 +20,40 @@ package systemuser
 import (
 	"context"
 
-	"github.com/elastic/terraform-provider-elasticstack/internal/clients"
+	"github.com/elastic/terraform-provider-elasticstack/internal/entitycore"
+	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 )
 
 // Ensure provider defined types fully satisfy framework interfaces
-var _ resource.Resource = &systemUserResource{}
-var _ resource.ResourceWithConfigure = &systemUserResource{}
-
-func NewSystemUserResource() resource.Resource {
-	return &systemUserResource{}
-}
+var (
+	_ resource.Resource                = newSystemUserResource()
+	_ resource.ResourceWithConfigure   = newSystemUserResource()
+	_ resource.ResourceWithImportState = newSystemUserResource()
+)
 
 type systemUserResource struct {
-	client *clients.ProviderClientFactory
+	*entitycore.ElasticsearchResource[Data]
 }
 
-func (r *systemUserResource) Metadata(_ context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
-	resp.TypeName = req.ProviderTypeName + "_elasticsearch_security_system_user"
+func newSystemUserResource() *systemUserResource {
+	return &systemUserResource{
+		ElasticsearchResource: entitycore.NewElasticsearchResource[Data](
+			entitycore.ComponentElasticsearch,
+			"security_system_user",
+			GetSchema,
+			readSystemUser,
+			deleteSystemUser,
+			writeSystemUser,
+			writeSystemUser,
+		),
+	}
 }
 
-func (r *systemUserResource) Configure(_ context.Context, req resource.ConfigureRequest, resp *resource.ConfigureResponse) {
-	client, diags := clients.ConvertProviderDataToFactory(req.ProviderData)
-	resp.Diagnostics.Append(diags...)
-	r.client = client
+func NewSystemUserResource() resource.Resource {
+	return newSystemUserResource()
+}
+
+func (r *systemUserResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
+	resource.ImportStatePassthroughID(ctx, path.Root("id"), req, resp)
 }

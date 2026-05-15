@@ -19,9 +19,11 @@ package agentbuilderagent
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/elastic/terraform-provider-elasticstack/generated/kbapi"
 	"github.com/elastic/terraform-provider-elasticstack/internal/clients"
+	"github.com/elastic/terraform-provider-elasticstack/internal/entitycore"
 	"github.com/elastic/terraform-provider-elasticstack/internal/models"
 	"github.com/elastic/terraform-provider-elasticstack/internal/utils/customtypes"
 	"github.com/hashicorp/terraform-plugin-framework/diag"
@@ -43,8 +45,8 @@ type agentModel struct {
 }
 
 type agentDataSourceModel struct {
+	entitycore.KibanaConnectionField
 	ID                  types.String `tfsdk:"id"`
-	KibanaConnection    types.List   `tfsdk:"kibana_connection"`
 	AgentID             types.String `tfsdk:"agent_id"`
 	SpaceID             types.String `tfsdk:"space_id"`
 	IncludeDependencies types.Bool   `tfsdk:"include_dependencies"`
@@ -55,6 +57,20 @@ type agentDataSourceModel struct {
 	Labels              types.Set    `tfsdk:"labels"`
 	Tools               []toolModel  `tfsdk:"tools"`
 	Instructions        types.String `tfsdk:"instructions"`
+}
+
+// GetVersionRequirements returns the static minimum Kibana version requirements
+// for the Agent Builder agent data source. This satisfies the optional
+// entitycore.WithVersionRequirements interface, allowing the
+// generic Kibana data source envelope to enforce the requirement before invoking
+// the entity read callback.
+func (model agentDataSourceModel) GetVersionRequirements() ([]entitycore.DataSourceVersionRequirement, diag.Diagnostics) {
+	return []entitycore.DataSourceVersionRequirement{
+		{
+			MinVersion:   *minKibanaAgentBuilderAPIVersion,
+			ErrorMessage: fmt.Sprintf("Agent Builder agents require Elastic Stack v%s or later.", minKibanaAgentBuilderAPIVersion),
+		},
+	}, nil
 }
 
 type toolModel struct {
@@ -88,17 +104,8 @@ func (model *agentDataSourceModel) populateFromAPI(ctx context.Context, spaceID 
 		model.Description = types.StringNull()
 	}
 
-	if data.AvatarColor != nil && *data.AvatarColor != "" {
-		model.AvatarColor = types.StringValue(*data.AvatarColor)
-	} else {
-		model.AvatarColor = types.StringNull()
-	}
-
-	if data.AvatarSymbol != nil && *data.AvatarSymbol != "" {
-		model.AvatarSymbol = types.StringValue(*data.AvatarSymbol)
-	} else {
-		model.AvatarSymbol = types.StringNull()
-	}
+	model.AvatarColor = types.StringPointerValue(data.AvatarColor)
+	model.AvatarSymbol = types.StringPointerValue(data.AvatarSymbol)
 
 	cfg := data.Configuration
 
@@ -137,17 +144,8 @@ func (model *agentModel) populateFromAPI(ctx context.Context, spaceID string, da
 		model.Description = types.StringNull()
 	}
 
-	if data.AvatarColor != nil && *data.AvatarColor != "" {
-		model.AvatarColor = types.StringValue(*data.AvatarColor)
-	} else {
-		model.AvatarColor = types.StringNull()
-	}
-
-	if data.AvatarSymbol != nil && *data.AvatarSymbol != "" {
-		model.AvatarSymbol = types.StringValue(*data.AvatarSymbol)
-	} else {
-		model.AvatarSymbol = types.StringNull()
-	}
+	model.AvatarColor = types.StringPointerValue(data.AvatarColor)
+	model.AvatarSymbol = types.StringPointerValue(data.AvatarSymbol)
 
 	cfg := data.Configuration
 
@@ -242,6 +240,7 @@ func (model agentModel) toAPIUpdateModel(ctx context.Context) (kbapi.PutAgentBui
 	}
 
 	body.Configuration = &struct {
+		ConnectorIds              *[]string `json:"connector_ids,omitempty"` //nolint:revive
 		EnableElasticCapabilities *bool     `json:"enable_elastic_capabilities,omitempty"`
 		Instructions              *string   `json:"instructions,omitempty"`
 		PluginIds                 *[]string `json:"plugin_ids,omitempty"` //nolint:revive

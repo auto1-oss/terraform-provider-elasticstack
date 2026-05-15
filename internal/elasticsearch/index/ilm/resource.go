@@ -20,35 +20,43 @@ package ilm
 import (
 	"context"
 
-	"github.com/elastic/terraform-provider-elasticstack/internal/clients"
+	"github.com/elastic/terraform-provider-elasticstack/internal/entitycore"
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 )
 
 var (
-	_ resource.Resource                   = &Resource{}
-	_ resource.ResourceWithConfigure      = &Resource{}
-	_ resource.ResourceWithImportState    = &Resource{}
-	_ resource.ResourceWithValidateConfig = &Resource{}
-	_ resource.ResourceWithUpgradeState   = &Resource{}
+	_ resource.Resource                   = newResource()
+	_ resource.ResourceWithConfigure      = newResource()
+	_ resource.ResourceWithImportState    = newResource()
+	_ resource.ResourceWithValidateConfig = newResource()
+	_ resource.ResourceWithUpgradeState   = newResource()
 )
 
-func NewResource() resource.Resource {
-	return &Resource{}
-}
-
+// Resource implements the elasticstack_elasticsearch_index_lifecycle resource.
+// It embeds *entitycore.ElasticsearchResource[tfModel] which owns Schema (with
+// connection-block injection), Create, Read, Update, and Delete via callbacks.
+// ImportState and UpgradeState are preserved on the concrete type.
 type Resource struct {
-	client *clients.ProviderClientFactory
+	*entitycore.ElasticsearchResource[tfModel]
 }
 
-func (r *Resource) Configure(_ context.Context, req resource.ConfigureRequest, resp *resource.ConfigureResponse) {
-	client, diags := clients.ConvertProviderDataToFactory(req.ProviderData)
-	resp.Diagnostics.Append(diags...)
-	r.client = client
+func newResource() *Resource {
+	return &Resource{
+		ElasticsearchResource: entitycore.NewElasticsearchResource[tfModel](
+			entitycore.ComponentElasticsearch,
+			"index_lifecycle",
+			ilmSchema,
+			readILM,
+			deleteILM,
+			createILM,
+			updateILM,
+		),
+	}
 }
 
-func (r *Resource) Metadata(_ context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
-	resp.TypeName = req.ProviderTypeName + "_elasticsearch_index_lifecycle"
+func NewResource() resource.Resource {
+	return newResource()
 }
 
 func (r *Resource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {

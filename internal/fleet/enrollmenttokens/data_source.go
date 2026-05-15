@@ -18,36 +18,16 @@
 package enrollmenttokens
 
 import (
-	"context"
-	"fmt"
-
-	"github.com/elastic/terraform-provider-elasticstack/internal/clients"
+	"github.com/elastic/terraform-provider-elasticstack/internal/entitycore"
 	"github.com/hashicorp/terraform-plugin-framework/datasource"
-)
-
-var (
-	_ datasource.DataSource              = &enrollmentTokensDataSource{}
-	_ datasource.DataSourceWithConfigure = &enrollmentTokensDataSource{}
 )
 
 // NewDataSource is a helper function to simplify the provider implementation.
 func NewDataSource() datasource.DataSource {
-	return &enrollmentTokensDataSource{}
-}
-
-type enrollmentTokensDataSource struct {
-	client *clients.ProviderClientFactory
-}
-
-func (d *enrollmentTokensDataSource) Metadata(_ context.Context, req datasource.MetadataRequest, resp *datasource.MetadataResponse) {
-	resp.TypeName = fmt.Sprintf("%s_%s", req.ProviderTypeName, "fleet_enrollment_tokens")
-}
-
-func (d *enrollmentTokensDataSource) Configure(_ context.Context, req datasource.ConfigureRequest, resp *datasource.ConfigureResponse) {
-	factory, diags := clients.ConvertProviderDataToFactory(req.ProviderData)
-	resp.Diagnostics.Append(diags...)
-	if resp.Diagnostics.HasError() {
-		return
-	}
-	d.client = factory
+	return entitycore.NewKibanaDataSource[enrollmentTokensModel](
+		entitycore.ComponentFleet,
+		"enrollment_tokens",
+		getDataSourceSchema,
+		readDataSource,
+	)
 }

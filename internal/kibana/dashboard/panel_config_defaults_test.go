@@ -24,7 +24,9 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	schemautil "github.com/elastic/terraform-provider-elasticstack/internal/utils"
+	"github.com/elastic/terraform-provider-elasticstack/internal/kibana/dashboard/panel/iface"
+	"github.com/elastic/terraform-provider-elasticstack/internal/kibana/dashboard/panel/markdown"
+	"github.com/elastic/terraform-provider-elasticstack/internal/utils/typeutils"
 )
 
 // assertPanelConfigEquals asserts that result matches expected using semantic JSON equality.
@@ -37,7 +39,7 @@ func assertPanelConfigEquals(t *testing.T, expectedJSON string, result map[strin
 	require.NoError(t, err)
 	expectedBytes, err := json.Marshal(expected)
 	require.NoError(t, err)
-	eq, err := schemautil.JSONBytesEqual(resultBytes, expectedBytes)
+	eq, err := typeutils.JSONBytesEqual(resultBytes, expectedBytes)
 	require.NoError(t, err)
 	assert.True(t, eq, "result %s != expected %s", string(resultBytes), string(expectedBytes))
 }
@@ -102,15 +104,36 @@ func Test_populatePanelConfigJSONDefaults_markdown(t *testing.T) {
 		"content": "body",
 	}
 	result := populatePanelConfigJSONDefaults(input)
-	assert.Equal(t, input, result)
 	assert.Equal(t, "My Panel", result["title"])
 	assert.Equal(t, "body", result["content"])
+	settings := result["settings"].(map[string]any)
+	assert.Equal(t, true, settings["open_links_in_new_tab"])
+}
+
+type markdownPopulateSpy struct {
+	markdown.Handler
+	populateCalls int
+}
+
+func (s *markdownPopulateSpy) PopulateJSONDefaults(cfg map[string]any) map[string]any {
+	s.populateCalls++
+	return s.Handler.PopulateJSONDefaults(cfg)
+}
+
+func Test_populatePanelConfigJSONDefaultsWithHandlers_dispatchStopsAtFirstMatch(t *testing.T) {
+	spy := markdownPopulateSpy{}
+	handlers := []iface.Handler{&spy}
+	input := map[string]any{"title": "My Panel", "content": "body"}
+	result := populatePanelConfigJSONDefaultsWithHandlers(input, handlers)
+	require.Equal(t, 1, spy.populateCalls)
+	settings := result["settings"].(map[string]any)
+	assert.Equal(t, true, settings["open_links_in_new_tab"])
 }
 
 func Test_populatePanelConfigJSONDefaults_unknownLensType(t *testing.T) {
 	input := map[string]any{
 		"attributes": map[string]any{
-			"type": "unknown_viz",
+			"type": "unknown_vis",
 			"data": "something",
 		},
 	}
@@ -137,11 +160,12 @@ func Test_populatePanelConfigJSONDefaults_tagcloud(t *testing.T) {
 				"attributes": {
 					"type": "tagcloud",
 					"filters": [],
-					"metric": {"field": "bytes", "operation": "sum", "empty_as_null": false, "show_metric_label": true},
+					"metric": {"field": "bytes", "operation": "sum", "empty_as_null": false, "show_metric_label": true, "color": {"type": "auto"}},
 					"tag_by": {
 						"operation": "terms",
 						"field": "host.name",
-						"rank_by": {"type": "column", "metric": 0, "direction": "desc"}
+						"rank_by": {"type": "metric", "metric_index": 0, "direction": "desc"},
+						"color": {"mode": "categorical", "palette": "default", "mapping": []}
 					}
 				}
 			}`,
@@ -173,7 +197,8 @@ func Test_populatePanelConfigJSONDefaults_gauge(t *testing.T) {
 				"field": "latency",
 				"empty_as_null": false,
 				"title": {"visible": true},
-				"ticks": {"visible": true, "mode": "auto"}
+				"ticks": {"visible": true, "mode": "bands"},
+				"color": {"type": "auto"}
 			}
 		}
 	}`
@@ -195,8 +220,8 @@ func Test_populatePanelConfigJSONDefaults_metric(t *testing.T) {
 			"type": "metric",
 			"filters": [],
 			"metrics": [
-				{"operation": "count", "empty_as_null": false, "fit": false},
-				{"operation": "sum", "field": "bytes", "empty_as_null": false, "fit": false}
+				{"operation": "count", "empty_as_null": false, "fit": false, "color": {"type": "auto"}},
+				{"operation": "sum", "field": "bytes", "empty_as_null": false, "fit": false, "color": {"type": "auto"}}
 			]
 		}
 	}`
@@ -218,7 +243,7 @@ func Test_populatePanelConfigJSONDefaults_pie(t *testing.T) {
 		"attributes": {
 			"type": "pie",
 			"filters": [],
-			"metrics": [{"operation": "count", "empty_as_null": false}],
+			"metrics": [{"operation": "count", "empty_as_null": false, "color": {"type": "auto"}}],
 			"group_by": [
 				{
 					"operation": "terms",
@@ -247,7 +272,7 @@ func Test_populatePanelConfigJSONDefaults_waffle(t *testing.T) {
 		"attributes": {
 			"type": "waffle",
 			"filters": [],
-			"metrics": [{"operation": "count", "empty_as_null": false}],
+			"metrics": [{"operation": "count", "empty_as_null": false, "color": {"type": "auto"}}],
 			"group_by": [
 				{
 					"operation": "terms",
@@ -279,7 +304,8 @@ func Test_populatePanelConfigJSONDefaults_region_map(t *testing.T) {
 				"operation": "sum",
 				"field": "count",
 				"empty_as_null": false,
-				"show_metric_label": true
+				"show_metric_label": true,
+				"color": {"type": "auto"}
 			}
 		}
 	}`
@@ -304,7 +330,8 @@ func Test_populatePanelConfigJSONDefaults_heatmap(t *testing.T) {
 				"operation": "max",
 				"field": "cpu",
 				"empty_as_null": false,
-				"show_metric_label": true
+				"show_metric_label": true,
+				"color": {"type": "auto"}
 			}
 		}
 	}`
@@ -344,7 +371,7 @@ func Test_populatePanelConfigJSONDefaults_treemap(t *testing.T) {
 							"rank_by": {"type": "column", "metric": 0, "direction": "desc"}
 						}
 					],
-					"metrics": [{"operation": "count", "empty_as_null": false, "show_metric_label": true}]
+					"metrics": [{"operation": "count", "empty_as_null": false, "show_metric_label": true, "color": {"type": "auto"}}]
 				}
 			}`,
 		},
@@ -428,7 +455,7 @@ func Test_populatePanelConfigJSONDefaults_mosaic(t *testing.T) {
 							"rank_by": {"type": "column", "metric": 0, "direction": "desc"}
 						}
 					],
-					"metrics": [{"operation": "count", "empty_as_null": false, "show_metric_label": true}]
+					"metrics": [{"operation": "count", "empty_as_null": false, "show_metric_label": true, "color": {"type": "auto"}}]
 				}
 			}`,
 		},
@@ -503,7 +530,7 @@ func Test_populatePanelConfigJSONDefaults_xy(t *testing.T) {
 					"layers": [
 						{
 							"type": "line",
-							"y": [{"operation": "count", "axis": "left", "empty_as_null": false, "fit": false}]
+							"y": [{"operation": "count", "axis": "left", "empty_as_null": false, "fit": false, "color": {"type": "auto"}}]
 						}
 					]
 				}
@@ -602,7 +629,7 @@ func Test_populatePanelConfigJSONDefaults_datatable(t *testing.T) {
 				"attributes": {
 					"type": "datatable",
 					"filters": [],
-					"metrics": [{"operation": "count", "empty_as_null": false, "fit": false}]
+					"metrics": [{"operation": "count", "empty_as_null": false, "fit": false, "color": {"type": "auto"}}]
 				}
 			}`,
 		},

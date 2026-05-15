@@ -26,33 +26,28 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework-jsontypes/jsontypes"
 	"github.com/hashicorp/terraform-plugin-framework-validators/int64validator"
 	"github.com/hashicorp/terraform-plugin-framework-validators/listvalidator"
+	"github.com/hashicorp/terraform-plugin-framework-validators/setvalidator"
 	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
 	"github.com/hashicorp/terraform-plugin-framework/attr"
 	"github.com/hashicorp/terraform-plugin-framework/path"
-	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/boolplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/int64planmodifier"
-	"github.com/hashicorp/terraform-plugin-framework/resource/schema/listplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/objectplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/setplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/types"
-
-	providerschema "github.com/elastic/terraform-provider-elasticstack/internal/schema"
+	"github.com/hashicorp/terraform-plugin-framework/types/basetypes"
 )
 
-func (r *datafeedResource) Schema(_ context.Context, _ resource.SchemaRequest, resp *resource.SchemaResponse) {
-	resp.Schema = GetSchema()
-}
-
-func GetSchema() schema.Schema {
+// getSchema returns the resource schema without the elasticsearch_connection
+// block, which is injected by the entitycore envelope.
+func getSchema(_ context.Context) schema.Schema {
 	return schema.Schema{
 		MarkdownDescription: schemaMarkdownDescription,
-		Blocks: map[string]schema.Block{
-			"elasticsearch_connection": providerschema.GetEsFWConnectionBlock(),
-		},
+		Blocks:              map[string]schema.Block{},
 		Attributes: map[string]schema.Attribute{
 			"id": schema.StringAttribute{
 				MarkdownDescription: "Internal identifier of the resource",
@@ -223,16 +218,16 @@ func GetSchema() schema.Schema {
 					objectplanmodifier.UseStateForUnknown(),
 				},
 				Attributes: map[string]schema.Attribute{
-					"expand_wildcards": schema.ListAttribute{
+					"expand_wildcards": schema.SetAttribute{
 						MarkdownDescription: expandWildcardsMarkdownDescription,
 						Optional:            true,
 						Computed:            true,
-						ElementType:         types.StringType,
-						PlanModifiers: []planmodifier.List{
-							listplanmodifier.UseStateForUnknown(),
+						CustomType:          ExpandWildcardsType{SetType: basetypes.SetType{ElemType: types.StringType}},
+						PlanModifiers: []planmodifier.Set{
+							setplanmodifier.UseStateForUnknown(),
 						},
-						Validators: []validator.List{
-							listvalidator.ValueStringsAre(
+						Validators: []validator.Set{
+							setvalidator.ValueStringsAre(
 								stringvalidator.OneOf("all", "open", "closed", "hidden", "none"),
 							),
 						},
@@ -270,15 +265,15 @@ func GetSchema() schema.Schema {
 
 // GetChunkingConfigAttrTypes returns the attribute types for chunking_config
 func GetChunkingConfigAttrTypes() map[string]attr.Type {
-	return GetSchema().Attributes["chunking_config"].GetType().(attr.TypeWithAttributeTypes).AttributeTypes()
+	return getSchema(context.Background()).Attributes["chunking_config"].GetType().(attr.TypeWithAttributeTypes).AttributeTypes()
 }
 
 // GetDelayedDataCheckConfigAttrTypes returns the attribute types for delayed_data_check_config
 func GetDelayedDataCheckConfigAttrTypes() map[string]attr.Type {
-	return GetSchema().Attributes["delayed_data_check_config"].GetType().(attr.TypeWithAttributeTypes).AttributeTypes()
+	return getSchema(context.Background()).Attributes["delayed_data_check_config"].GetType().(attr.TypeWithAttributeTypes).AttributeTypes()
 }
 
 // GetIndicesOptionsAttrTypes returns the attribute types for indices_options
 func GetIndicesOptionsAttrTypes() map[string]attr.Type {
-	return GetSchema().Attributes["indices_options"].GetType().(attr.TypeWithAttributeTypes).AttributeTypes()
+	return getSchema(context.Background()).Attributes["indices_options"].GetType().(attr.TypeWithAttributeTypes).AttributeTypes()
 }

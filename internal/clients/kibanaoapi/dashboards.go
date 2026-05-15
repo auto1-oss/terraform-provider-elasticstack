@@ -19,31 +19,13 @@ package kibanaoapi
 
 import (
 	"context"
-	"fmt"
 	"net/http"
 
 	"github.com/elastic/terraform-provider-elasticstack/generated/kbapi"
+	"github.com/elastic/terraform-provider-elasticstack/internal/clients/kibanautil"
 	"github.com/elastic/terraform-provider-elasticstack/internal/diagutil"
 	"github.com/hashicorp/terraform-plugin-framework/diag"
 )
-
-// buildSpaceAwarePath constructs an API path with space awareness.
-// If spaceID is empty or "default", returns the basePath unchanged.
-// Otherwise, prepends "/s/{spaceID}" to the basePath.
-func buildSpaceAwarePath(spaceID, basePath string) string {
-	if spaceID != "" && spaceID != "default" {
-		return fmt.Sprintf("/s/%s%s", spaceID, basePath)
-	}
-	return basePath
-}
-
-// spaceAwarePathRequestEditor returns a RequestEditorFn that modifies the request path for space awareness.
-func spaceAwarePathRequestEditor(spaceID string) func(ctx context.Context, req *http.Request) error {
-	return func(_ context.Context, req *http.Request) error {
-		req.URL.Path = buildSpaceAwarePath(spaceID, req.URL.Path)
-		return nil
-	}
-}
 
 // The Dashboard API currently requires allowUnmappedKeys for these requests.
 func addDashboardRequestShapeEditor() func(ctx context.Context, req *http.Request) error {
@@ -59,28 +41,22 @@ func addDashboardRequestShapeEditor() func(ctx context.Context, req *http.Reques
 func GetDashboard(ctx context.Context, client *Client, spaceID string, dashboardID string) (*kbapi.GetDashboardsIdResponse, diag.Diagnostics) {
 	resp, err := client.API.GetDashboardsIdWithResponse(
 		ctx, dashboardID,
-		spaceAwarePathRequestEditor(spaceID),
+		kibanautil.SpaceAwarePathRequestEditor(spaceID),
 		addDashboardRequestShapeEditor(),
 	)
 	if err != nil {
 		return nil, diagutil.FrameworkDiagFromError(err)
 	}
 
-	switch resp.StatusCode() {
-	case http.StatusOK:
-		return resp, nil
-	case http.StatusNotFound:
-		return nil, nil
-	default:
-		return nil, reportUnknownError(resp.StatusCode(), resp.Body)
-	}
+	return handleGetTypedResponse(resp.StatusCode(), resp.Body,
+		func() *kbapi.GetDashboardsIdResponse { return resp })
 }
 
 // CreateDashboard creates a new dashboard.
 func CreateDashboard(ctx context.Context, client *Client, spaceID string, req kbapi.PostDashboardsJSONRequestBody) (*kbapi.PostDashboardsResponse, diag.Diagnostics) {
 	resp, err := client.API.PostDashboardsWithResponse(
 		ctx, req,
-		spaceAwarePathRequestEditor(spaceID),
+		kibanautil.SpaceAwarePathRequestEditor(spaceID),
 		addDashboardRequestShapeEditor(),
 	)
 	if err != nil {
@@ -91,7 +67,7 @@ func CreateDashboard(ctx context.Context, client *Client, spaceID string, req kb
 	case http.StatusCreated:
 		return resp, nil
 	default:
-		return nil, reportUnknownError(resp.StatusCode(), resp.Body)
+		return nil, diagutil.ReportUnknownHTTPError(resp.StatusCode(), resp.Body)
 	}
 }
 
@@ -99,38 +75,28 @@ func CreateDashboard(ctx context.Context, client *Client, spaceID string, req kb
 func UpdateDashboard(ctx context.Context, client *Client, spaceID string, dashboardID string, req kbapi.PutDashboardsIdJSONRequestBody) (*kbapi.PutDashboardsIdResponse, diag.Diagnostics) {
 	resp, err := client.API.PutDashboardsIdWithResponse(
 		ctx, dashboardID, req,
-		spaceAwarePathRequestEditor(spaceID),
+		kibanautil.SpaceAwarePathRequestEditor(spaceID),
 		addDashboardRequestShapeEditor(),
 	)
 	if err != nil {
 		return nil, diagutil.FrameworkDiagFromError(err)
 	}
 
-	switch resp.StatusCode() {
-	case http.StatusOK:
-		return resp, nil
-	default:
-		return nil, reportUnknownError(resp.StatusCode(), resp.Body)
-	}
+	return handleMutateTypedResponse(resp.StatusCode(), resp.Body,
+		func() *kbapi.PutDashboardsIdResponse { return resp },
+		http.StatusOK, http.StatusCreated)
 }
 
 // DeleteDashboard deletes an existing dashboard.
 func DeleteDashboard(ctx context.Context, client *Client, spaceID string, dashboardID string) diag.Diagnostics {
 	resp, err := client.API.DeleteDashboardsIdWithResponse(
 		ctx, dashboardID,
-		spaceAwarePathRequestEditor(spaceID),
+		kibanautil.SpaceAwarePathRequestEditor(spaceID),
 		addDashboardRequestShapeEditor(),
 	)
 	if err != nil {
 		return diagutil.FrameworkDiagFromError(err)
 	}
 
-	switch resp.StatusCode() {
-	case http.StatusOK, http.StatusNoContent:
-		return nil
-	case http.StatusNotFound:
-		return nil
-	default:
-		return reportUnknownError(resp.StatusCode(), resp.Body)
-	}
+	return diagutil.HandleStatusResponse(resp.StatusCode(), resp.Body, http.StatusOK, http.StatusNoContent, http.StatusNotFound)
 }
